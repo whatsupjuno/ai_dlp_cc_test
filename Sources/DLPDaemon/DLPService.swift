@@ -151,8 +151,15 @@ public final class DLPService: @unchecked Sendable {
         case .block, .quarantine:
             // Remove the sensitive value from the clipboard so it can't be pasted.
             clipboard.replaceClipboard(with: "⚠︎ Sentinel DLP removed sensitive data from your clipboard.")
-        case .allow, .audit, .warn:
-            break // warn is surfaced via onVerdict/notification, clipboard untouched
+        case .warn:
+            // `warn` permits only after explicit justification. The headless
+            // service can't show that prompt synchronously, so it fails safe:
+            // remove the value from the clipboard (it must not stay silently
+            // pasteable) and surface it via onVerdict so the menu-bar app can run
+            // the justification flow and restore the content on confirmation.
+            clipboard.replaceClipboard(with: "⚠︎ Sentinel DLP held sensitive data — sharing this with an AI tool requires confirmation.")
+        case .allow, .audit:
+            break // nothing to enforce on the clipboard
         }
     }
 }

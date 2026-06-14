@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Entitlements for the NEFilterDataProvider system extension. The
-  `content-filter-provider` value is what lets this process register as a
-  socket content filter. Shares the App Group with the containing app.
+  Entitlements for the NEFilterDataProvider system extension. A macOS *system
+  extension* (Developer ID) must use the `-systemextension` entitlement value;
+  the legacy `content-filter-provider` (app-extension) value causes activation to
+  be rejected and the provider never starts.
 -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>com.apple.developer.networking.networkextension</key>
     <array>
-        <string>content-filter-provider</string>
+        <string>content-filter-provider-systemextension</string>
     </array>
     <key>com.apple.security.application-groups</key>
     <array>

@@ -3,7 +3,7 @@
 | File | Purpose |
 |---|---|
 | `entitlements/SentinelAgent.entitlements` | Menu-bar app: installs the system extension, App Group |
-| `entitlements/SentinelNetworkFilter.entitlements` | NEFilterDataProvider: `content-filter-provider` |
+| `entitlements/SentinelNetworkFilter.entitlements` | NEFilterDataProvider: `content-filter-provider-systemextension` |
 | `entitlements/SentinelEndpointSecurity.entitlements` | ES extension: restricted `endpoint-security.client` |
 | `Info/SentinelAgent-Info.plist` | `LSUIElement` (no Dock icon), bundle id, versions |
 | `Info/SentinelNetworkFilter-Info.plist` | `NSExtension` filter-data registration |
