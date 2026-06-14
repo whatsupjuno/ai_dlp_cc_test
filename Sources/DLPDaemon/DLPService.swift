@@ -48,8 +48,11 @@ public final class DLPService: @unchecked Sendable {
     private var monitors: [Monitor] = []
     private var clipboardMonitor: ClipboardMonitor?
 
-    /// Invoked on every verdict that has findings or a non-allow action.
-    public var onVerdict: (@Sendable (DLPVerdict, MonitoredPayload) -> Void)?
+    /// Invoked on every verdict that has findings or a non-allow action. The
+    /// third argument is the pasteboard change-count captured immediately after
+    /// the clipboard was replaced (for warn/redact/block), or `nil` — callers use
+    /// it to bind a later restore to exactly this clipboard state without racing.
+    public var onVerdict: (@Sendable (DLPVerdict, MonitoredPayload, Int?) -> Void)?
 
     public init(engine: DLPEngine, configuration: Configuration = Configuration()) {
         self.engine = engine
@@ -138,35 +141,39 @@ public final class DLPService: @unchecked Sendable {
             host: nil,
             sourceApp: payload.sourceApp
         )
-        enforce(verdict, for: payload)
+        let heldChangeCount = enforce(verdict, for: payload)
         if verdict.hasFindings || verdict.action != .allow {
-            onVerdict?(verdict, payload)
+            onVerdict?(verdict, payload, heldChangeCount)
         }
         return verdict
     }
 
-    private func enforce(_ verdict: DLPVerdict, for payload: MonitoredPayload) {
+    /// Apply clipboard enforcement. Returns the pasteboard change-count captured
+    /// immediately after replacing the clipboard (so the caller can bind a later
+    /// restore to this exact state), or `nil` if the clipboard wasn't touched.
+    @discardableResult
+    private func enforce(_ verdict: DLPVerdict, for payload: MonitoredPayload) -> Int? {
         guard payload.channel == .clipboard,
               isEnforcing,
-              let clipboard = clipboardMonitor else { return }
+              let clipboard = clipboardMonitor else { return nil }
 
         switch verdict.action {
         case .redact:
-            if let redacted = verdict.redactedContent {
-                clipboard.replaceClipboard(with: redacted)
-            }
+            guard let redacted = verdict.redactedContent else { return nil }
+            return clipboard.replaceClipboard(with: redacted)
         case .block, .quarantine:
             // Remove the sensitive value from the clipboard so it can't be pasted.
-            clipboard.replaceClipboard(with: "⚠︎ Sentinel DLP removed sensitive data from your clipboard.")
+            return clipboard.replaceClipboard(with: "⚠︎ Sentinel DLP removed sensitive data from your clipboard.")
         case .warn:
             // `warn` permits only after explicit justification. The headless
             // service can't show that prompt synchronously, so it fails safe:
             // remove the value from the clipboard (it must not stay silently
-            // pasteable) and surface it via onVerdict so the menu-bar app can run
-            // the justification flow and restore the content on confirmation.
-            clipboard.replaceClipboard(with: "⚠︎ Sentinel DLP held sensitive data — sharing this with an AI tool requires confirmation.")
+            // pasteable) and surface it via onVerdict — with the post-replace
+            // change-count — so the menu-bar app can run the justification flow
+            // and restore the content on confirmation without a TOCTOU race.
+            return clipboard.replaceClipboard(with: "⚠︎ Sentinel DLP held sensitive data — sharing this with an AI tool requires confirmation.")
         case .allow, .audit:
-            break // nothing to enforce on the clipboard
+            return nil // nothing to enforce on the clipboard
         }
     }
 }

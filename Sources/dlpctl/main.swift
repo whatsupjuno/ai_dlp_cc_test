@@ -115,7 +115,7 @@ func cmdWatch(_ args: Args) {
     eprint(Term.dim("  mode: \(enforce ? "ENFORCE (redact/clear on hit)" : "observe only")  ·  interval: \(interval)s"))
     eprint(Term.dim("  Copy a test secret (e.g. a fake card or sk-ant- key) to see it caught. Ctrl-C to stop.\n"))
 
-    service.onVerdict = { verdict, payload in
+    service.onVerdict = { verdict, payload, _ in
         if json {
             print(Render.json(verdict)); fflush(stdout)
         } else {

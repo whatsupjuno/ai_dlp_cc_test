@@ -62,10 +62,13 @@ public final class ClipboardMonitor: Monitor, @unchecked Sendable {
     /// Replace the clipboard contents — used to enforce a `redact` verdict on the
     /// clipboard vector (swap the secret for its sanitized form) or to clear it
     /// on `block`. Updates `lastChangeCount` so our own write doesn't re-trigger
-    /// inspection on the next poll.
-    public func replaceClipboard(with newValue: String) {
+    /// inspection on the next poll. Returns the resulting pasteboard change-count
+    /// so callers can bind a later "restore" to exactly this clipboard state.
+    @discardableResult
+    public func replaceClipboard(with newValue: String) -> Int {
         pasteboard.clearContents()
         pasteboard.setString(newValue, forType: .string)
         lastChangeCount = pasteboard.changeCount
+        return lastChangeCount
     }
 }

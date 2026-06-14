@@ -111,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         // Capture only the (Sendable) model; the glyph refresh is driven by the
         // Combine subscription above, so no non-Sendable `self` is captured here.
-        svc.onVerdict = { [model] verdict, payload in
+        svc.onVerdict = { [model] verdict, payload, heldChangeCount in
             DispatchQueue.main.async {
                 model.record(verdict, payload: payload)
                 // Every new clipboard verdict supersedes any older pending warning
@@ -119,14 +119,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 model.pendingWarning = nil
                 // A warn verdict already removed the value from the clipboard;
                 // retain the original so the user can justify and restore it,
-                // bound to the current pasteboard change-count.
-                if verdict.action == .warn {
+                // bound to the change-count captured ON THE MONITOR QUEUE right
+                // after the replacement (no TOCTOU with a newer clipboard item).
+                if verdict.action == .warn, let held = heldChangeCount {
                     let types = Array(Set(verdict.findings.map(\.type.name))).sorted().joined(separator: ", ")
                     model.pendingWarning = AgentModel.PendingWarning(
                         text: payload.text,
                         summary: types.isEmpty ? verdict.reason : types,
                         destination: verdict.context.destination.displayName,
-                        changeCount: NSPasteboard.general.changeCount)
+                        changeCount: held)
                 }
             }
         }

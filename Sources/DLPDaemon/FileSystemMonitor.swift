@@ -34,8 +34,11 @@ public final class FileSystemMonitor: Monitor, @unchecked Sendable {
 
     private var stream: FSEventStreamRef?
     private var selfRef: Unmanaged<FileSystemMonitor>?
-    /// Debounce: avoid re-scanning the same path repeatedly within a short window.
-    private var recentlyScanned: [String: Date] = [:]
+    /// Per-path debounce: a pending delayed scan, rescheduled on each event so a
+    /// burst (create → write …) collapses into one scan of the settled file.
+    private var pendingScans: [String: DispatchWorkItem] = [:]
+    /// How long a path must be quiet before we scan it.
+    private let quietPeriod: TimeInterval = 0.8
 
     public init(
         paths: [String],
@@ -106,11 +109,18 @@ public final class FileSystemMonitor: Monitor, @unchecked Sendable {
         FSEventStreamStop(s)
         FSEventStreamInvalidate(s)
         FSEventStreamRelease(s)
+        // Cancel any in-flight debounced scans (on the queue that owns them).
+        queue.async { [weak self] in
+            self?.pendingScans.values.forEach { $0.cancel() }
+            self?.pendingScans.removeAll()
+        }
         stream = nil
         selfRef?.release()
         selfRef = nil
     }
 
+    // Runs on `queue` (the FSEvents dispatch queue), so per-path state needs no
+    // extra lock.
     private func handle(path: String, flags: FSEventStreamEventFlags) {
         let isFile = flags & FSEventStreamEventFlags(kFSEventStreamEventFlagItemIsFile) != 0
         let mutated = flags & FSEventStreamEventFlags(
@@ -121,17 +131,23 @@ public final class FileSystemMonitor: Monitor, @unchecked Sendable {
         guard isFile, mutated else { return }
         guard Self.isInspectable(path: path, textExtensions: textExtensions) else { return }
 
-        // Debounce identical paths within 2s.
-        let now = Date()
-        if let last = recentlyScanned[path], now.timeIntervalSince(last) < 2.0 { return }
-        recentlyScanned[path] = now
-        if recentlyScanned.count > 512 { recentlyScanned.removeAll(keepingCapacity: true) }
+        // Coalesce a burst of events for one path (create → truncate → write …)
+        // into a SINGLE scan of the final contents, fired once the path goes
+        // quiet. A previous "scan first, ignore for 2s" approach scanned the
+        // initial empty/partial file and dropped the later event carrying the
+        // real (secret-bearing) contents.
+        pendingScans[path]?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.scanSettledFile(path) }
+        pendingScans[path] = work
+        queue.asyncAfter(deadline: .now() + quietPeriod, execute: work)
+    }
 
+    private func scanSettledFile(_ path: String) {
+        pendingScans.removeValue(forKey: path)
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let size = attrs[.size] as? Int, size > 0, size <= maxFileSize else { return }
         guard let data = FileManager.default.contents(atPath: path),
               let text = String(data: data, encoding: .utf8), !text.isEmpty else { return }
-
         handler(MonitoredPayload(text: text, channel: .file, sourceApp: nil, origin: path))
     }
 }
