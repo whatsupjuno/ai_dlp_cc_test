@@ -75,7 +75,10 @@ public final class FilterDataProvider: NEFilterDataProvider {
 
         switch destination.tier {
         case .blocked:
-            // Forbidden AI service — never allow the connection.
+            // Record the denied egress to a forbidden AI service BEFORE dropping —
+            // this is the highest-risk policy path and must be visible in
+            // audit/SIEM (block-forbidden-destination fires on the empty body).
+            engine.inspect("", channel: .network, host: host, sourceApp: nil)
             return .drop()
 
         case .sanctioned, .unknown:

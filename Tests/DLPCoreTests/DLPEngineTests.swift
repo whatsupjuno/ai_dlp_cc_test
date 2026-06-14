@@ -30,6 +30,19 @@ final class DLPEngineTests: XCTestCase {
         XCTAssertTrue(v.findings.contains { $0.type.id == "kr-rrn" })
     }
 
+    func testBlockedDestinationAuditedEvenWithoutContent() {
+        // codex round-10: a forbidden-tier destination must produce an audit
+        // record even when there is no inspectable body (this is what the network
+        // filter calls before dropping a blocked flow).
+        let sink = InMemoryAuditSink()
+        let engine = DLPEngine(auditSink: sink)
+        let v = engine.inspect("", channel: .network, host: "deepseek.com")
+        XCTAssertEqual(v.action, .block)
+        XCTAssertEqual(v.matchedRuleID, "block-forbidden-destination")
+        XCTAssertEqual(sink.events.count, 1)
+        XCTAssertEqual(sink.events.first?.destinationTier, .blocked)
+    }
+
     func testCleanTextAllows() {
         let engine = DLPEngine()
         let v = engine.inspect("the quick brown fox jumps over the lazy dog",
