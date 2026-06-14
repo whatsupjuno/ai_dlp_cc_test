@@ -33,15 +33,41 @@ cp "$ROOT/packaging/Info/SentinelAgent-Info.plist" "$APP/Contents/Info.plist"
 # Bundle the SwiftPM resource bundles (patterns.json, ai-services.json).
 cp -R "$BUILD_DIR"/*.bundle "$APP/Contents/Resources/" 2>/dev/null || true
 
+# Pull pre-built system extensions from a STAGING dir (the app bundle is wiped on
+# every run, so they can't live inside it between runs). Build the
+# NetworkExtension / EndpointSecurity targets in Xcode and drop their bundles in
+# $EXTENSIONS_DIR (default dist/extensions/).
+EXTENSIONS_DIR="${EXTENSIONS_DIR:-$ROOT/dist/extensions}"
+if [ -d "$EXTENSIONS_DIR" ]; then
+  find "$EXTENSIONS_DIR" -mindepth 1 -maxdepth 1 \( -name '*.appex' -o -name '*.systemextension' \) \
+    -exec cp -R {} "$APP/Contents/Library/SystemExtensions/" \;
+fi
+
 cat <<EOF
 
-▸ Embed the system extension(s):
-    Build SentinelNetworkFilter.appex (and SentinelEndpointSecurity.systemextension)
-    from the Xcode project, then copy into:
-      $APP/Contents/Library/SystemExtensions/
+▸ System extensions are staged from: $EXTENSIONS_DIR
+    (build SentinelNetworkFilter.appex / SentinelEndpointSecurity.systemextension
+     in Xcode and place them there before running this script)
 
 ▸ Signing (order matters — sign nested code first):
 EOF
+
+# Require the embedded system extensions to be present BEFORE signing. Signing the
+# app over an empty SystemExtensions dir produces a notarized bundle with no
+# network filter, and copying extensions in afterwards invalidates the app
+# signature. Set ALLOW_NO_EXTENSIONS=1 to intentionally build a clipboard-only
+# agent (no network/ES vectors).
+ext_count=$(find "$APP/Contents/Library/SystemExtensions" -mindepth 1 -maxdepth 1 \
+  \( -name '*.appex' -o -name '*.systemextension' \) 2>/dev/null | wc -l | tr -d ' ')
+if [ "$ext_count" -eq 0 ] && [ -z "${ALLOW_NO_EXTENSIONS:-}" ]; then
+  echo "✗ No system extensions found in $APP/Contents/Library/SystemExtensions/."
+  echo "  Build the NetworkExtension/EndpointSecurity targets in Xcode and copy"
+  echo "  their .appex/.systemextension bundles there BEFORE running this script,"
+  echo "  or set ALLOW_NO_EXTENSIONS=1 to build a clipboard-only agent."
+  echo "  Aborting: signing now would ship an app with no network filter, and"
+  echo "  embedding extensions afterward would break the app signature."
+  exit 1
+fi
 
 echo "▸ Signing…"
 # Sign embedded extensions first (if present), then the app, deep + hardened

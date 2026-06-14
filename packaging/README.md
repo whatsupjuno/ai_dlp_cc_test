@@ -14,17 +14,20 @@
 
 1. **Replace placeholders** — `ABCDE12345` → your Apple **Team ID**; the
    `*DesignatedRequirement` strings → `codesign -dr -` output for each binary.
-2. **Build & sign** the agent + CLI:
+2. **Build the system extensions first** in Xcode (NetworkExtension + Endpoint
+   Security targets that link the `DLPCore` SwiftPM package and the sources in
+   `Sources/SentinelNetworkFilter/` and `extensions/EndpointSecurity/`) and place
+   the `.appex` / `.systemextension` bundles in the staging dir `dist/extensions/`
+   (override with `EXTENSIONS_DIR`). The script stages them into the freshly-
+   assembled app and signs nested code *before* the app.
+3. **Build & sign** the agent + CLI. The script refuses to sign an app with no
+   embedded extensions — set `ALLOW_NO_EXTENSIONS=1` only for a clipboard-only
+   build:
    ```bash
    export SIGN_ID="Developer ID Application: Acme, Inc. (ABCDE12345)"
    export NOTARY_PROFILE=sentinel-notary
    ./packaging/build-and-sign.sh
    ```
-3. **Build the system extensions** in Xcode (NetworkExtension + Endpoint
-   Security targets that link the `DLPCore` SwiftPM package and the sources in
-   `Sources/SentinelNetworkFilter/` and `extensions/EndpointSecurity/`), embed
-   the `.appex` / `.systemextension` in
-   `Sentinel.app/Contents/Library/SystemExtensions/`.
 4. **Distribute the MDM profile** (`mdm/Sentinel-DLP.mobileconfig`) so the
    extension is pre-approved and the filter/TCC/login-item are configured with
    no end-user interaction.

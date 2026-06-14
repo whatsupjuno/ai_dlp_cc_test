@@ -90,11 +90,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// User justified a warned action → restore the original content to the
-    /// clipboard so it can be pasted, and clear the pending prompt.
+    /// clipboard so it can be pasted, and clear the pending prompt. Only restores
+    /// if the clipboard hasn't moved on since the warning was raised, so we never
+    /// overwrite a different clipboard item than the one the user is confirming.
     private func confirmPendingWarning() {
         guard let pending = model.pendingWarning else { return }
+        defer { model.pendingWarning = nil }
+        guard pending.changeCount == NSPasteboard.general.changeCount else { return }
         service?.confirmAndRestore(pending.text)
-        model.pendingWarning = nil
     }
 
     // MARK: - Service
@@ -111,14 +114,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         svc.onVerdict = { [model] verdict, payload in
             DispatchQueue.main.async {
                 model.record(verdict, payload: payload)
+                // Every new clipboard verdict supersedes any older pending warning
+                // (the clipboard has moved on), preventing a stale restore.
+                model.pendingWarning = nil
                 // A warn verdict already removed the value from the clipboard;
-                // retain the original so the user can justify and restore it.
+                // retain the original so the user can justify and restore it,
+                // bound to the current pasteboard change-count.
                 if verdict.action == .warn {
                     let types = Array(Set(verdict.findings.map(\.type.name))).sorted().joined(separator: ", ")
                     model.pendingWarning = AgentModel.PendingWarning(
                         text: payload.text,
                         summary: types.isEmpty ? verdict.reason : types,
-                        destination: verdict.context.destination.displayName)
+                        destination: verdict.context.destination.displayName,
+                        changeCount: NSPasteboard.general.changeCount)
                 }
             }
         }

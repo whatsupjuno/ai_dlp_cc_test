@@ -43,6 +43,10 @@ final class AgentModel: ObservableObject, @unchecked Sendable {
         let text: String
         let summary: String
         let destination: String
+        /// The pasteboard change-count this warning was raised for. If the
+        /// clipboard moves on before the user decides, the pending warning is
+        /// stale and must not overwrite the new clipboard content.
+        let changeCount: Int
     }
     @Published var pendingWarning: PendingWarning?
 
