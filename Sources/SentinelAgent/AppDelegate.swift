@@ -90,14 +90,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// User justified a warned action → restore the original content to the
-    /// clipboard so it can be pasted, and clear the pending prompt. Only restores
-    /// if the clipboard hasn't moved on since the warning was raised, so we never
-    /// overwrite a different clipboard item than the one the user is confirming.
+    /// clipboard so it can be pasted, and clear the pending prompt. The restore
+    /// is gated on the held change-count *inside the monitor queue*, so it never
+    /// overwrites a clipboard item copied after the warning was raised.
     private func confirmPendingWarning() {
         guard let pending = model.pendingWarning else { return }
-        defer { model.pendingWarning = nil }
-        guard pending.changeCount == NSPasteboard.general.changeCount else { return }
-        service?.confirmAndRestore(pending.text)
+        service?.confirmAndRestore(pending.text, expectedChangeCount: pending.changeCount)
+        model.pendingWarning = nil
     }
 
     // MARK: - Service

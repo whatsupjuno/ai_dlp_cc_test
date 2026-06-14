@@ -72,10 +72,14 @@ public final class DLPService: @unchecked Sendable {
     }
 
     /// Restore content to the clipboard after the user justifies a `.warn`
-    /// verdict. `replaceClipboard` updates the monitor's change-count, so the
-    /// restored value is not re-inspected (no warn loop) — the user has confirmed.
-    public func confirmAndRestore(_ text: String) {
-        clipboardMonitor?.replaceClipboard(with: text)
+    /// verdict — but only if the clipboard is still at `expectedChangeCount` (the
+    /// count captured when the warning was raised), checked atomically on the
+    /// monitor queue so a newer clipboard item is never overwritten. The restored
+    /// value isn't re-inspected (the change-count update suppresses the next poll).
+    /// Returns whether the restore happened.
+    @discardableResult
+    public func confirmAndRestore(_ text: String, expectedChangeCount: Int) -> Bool {
+        clipboardMonitor?.restoreIfUnchanged(text, expectedChangeCount: expectedChangeCount) ?? false
     }
 
     /// Hot-swap the engine (new policy / pattern pack) atomically.

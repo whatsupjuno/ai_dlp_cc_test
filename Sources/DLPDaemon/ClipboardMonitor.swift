@@ -86,4 +86,20 @@ public final class ClipboardMonitor: Monitor, @unchecked Sendable {
         lastChangeCount = pasteboard.changeCount
         return lastChangeCount
     }
+
+    /// Restore `text` to the clipboard ONLY if the pasteboard is still at
+    /// `expectedChangeCount` — checked atomically on the monitor queue right
+    /// before clearing/restoring, so a clipboard write that lands between the
+    /// caller's decision and this point can't be overwritten with stale content.
+    /// Returns whether the restore happened.
+    @discardableResult
+    public func restoreIfUnchanged(_ text: String, expectedChangeCount: Int) -> Bool {
+        let op: () -> Bool = {
+            guard self.pasteboard.changeCount == expectedChangeCount else { return false }
+            _ = self.performReplace(with: text)
+            return true
+        }
+        if DispatchQueue.getSpecific(key: Self.queueKey) == 1 { return op() }
+        return queue.sync(execute: op)
+    }
 }
