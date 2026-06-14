@@ -75,9 +75,19 @@ public final class EndpointSecurityMonitor {
             // Authorize file opens; deny reads of sensitive files ONLY when the
             // opener is an unsanctioned uploader (browser / AI client). Must
             // always respond.
-            let filePath = Self.string(message.pointee.event.open.file.pointee.path)
-            let openerPath = Self.string(message.pointee.process.pointee.executable.pointee.path)
-            let allow = shouldAllowOpen(filePath: filePath, openerPath: openerPath)
+            let openEvent = message.pointee.event.open
+            // ES `fflag` is the KERNEL open mask (FREAD = 0x1, FWRITE = 0x2), not
+            // an O_RDONLY-style value. Only opens that actually READ bytes can
+            // exfiltrate, so allow write-only / truncate-only opens immediately
+            // (e.g. a browser saving/downloading over an existing file).
+            let allow: Bool
+            if openEvent.fflag & 0x1 == 0 {
+                allow = true
+            } else {
+                let filePath = Self.string(openEvent.file.pointee.path)
+                let openerPath = Self.string(message.pointee.process.pointee.executable.pointee.path)
+                allow = shouldAllowOpen(filePath: filePath, openerPath: openerPath)
+            }
             if let client {
                 es_respond_auth_result(client, message,
                                        allow ? ES_AUTH_RESULT_ALLOW : ES_AUTH_RESULT_DENY,
