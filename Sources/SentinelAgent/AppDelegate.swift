@@ -103,7 +103,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func startService() {
         let auditSink = makeAuditSink()
-        let engine = DLPEngine(configuration: DLPConfiguration(), auditSink: auditSink)
+        // No sink on the engine — DLPService owns auditing so the recorded action
+        // reflects what each channel actually enforced.
+        let engine = DLPEngine(configuration: DLPConfiguration())
 
         // Watch the user dirs where exports/downloads land before being uploaded.
         // Filtered to existing paths so FSEvents startup can't fail the service
@@ -115,6 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let svc = DLPService(
             engine: engine,
+            auditSink: auditSink,
             configuration: .init(
                 enableClipboard: true,
                 clipboardEnforcement: .enforce,

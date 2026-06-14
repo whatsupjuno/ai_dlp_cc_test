@@ -101,9 +101,11 @@ func cmdWatch(_ args: Args) {
     let json = args.has("json")
 
     let audit = InMemoryAuditSink()
-    let engine = buildEngine(args, auditSink: audit)
+    // No sink on the engine — the service owns auditing (channel-aware actions).
+    let engine = buildEngine(args)
     let service = DLPService(
         engine: engine,
+        auditSink: audit,
         configuration: .init(
             enableClipboard: true,
             clipboardInterval: interval,

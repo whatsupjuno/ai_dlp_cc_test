@@ -41,6 +41,9 @@ public final class DLPService: @unchecked Sendable {
     private let lock = NSLock()
     private var engine: DLPEngine
     private let config: Configuration
+    /// The service owns auditing (not the engine) so the recorded action reflects
+    /// what was ACTUALLY enforced per channel. Pass an engine built WITHOUT a sink.
+    private let auditSink: AuditSink?
     /// Runtime gate for clipboard enforcement, toggleable from the UI without a
     /// restart. Protected by `lock`.
     private var enforcementEnabled: Bool
@@ -54,8 +57,9 @@ public final class DLPService: @unchecked Sendable {
     /// it to bind a later restore to exactly this clipboard state without racing.
     public var onVerdict: (@Sendable (DLPVerdict, MonitoredPayload, Int?) -> Void)?
 
-    public init(engine: DLPEngine, configuration: Configuration = Configuration()) {
+    public init(engine: DLPEngine, auditSink: AuditSink? = nil, configuration: Configuration = Configuration()) {
         self.engine = engine
+        self.auditSink = auditSink
         self.config = configuration
         self.enforcementEnabled = configuration.clipboardEnforcement == .enforce
     }
@@ -139,17 +143,35 @@ public final class DLPService: @unchecked Sendable {
     /// verdict so callers (CLI) can render it.
     @discardableResult
     public func ingest(_ payload: MonitoredPayload) -> DLPVerdict {
-        let verdict = currentEngine().inspect(
+        // The engine has no sink (see init), so this does not auto-audit.
+        let raw = currentEngine().inspect(
             payload.text,
             channel: payload.channel,
             host: nil,
             sourceApp: payload.sourceApp
         )
+        // Report the action that was ACTUALLY applied. Only the clipboard vector
+        // enforces (redact/block/warn); the filesystem vector is observe-only, so
+        // a block/redact there is downgraded to audit — neither users nor SIEM
+        // should see a false "blocked" for a file that was never touched.
+        let verdict = Self.effectiveVerdict(raw, channel: payload.channel)
         let heldChangeCount = enforce(verdict, for: payload)
         if verdict.hasFindings || verdict.action != .allow {
+            auditSink?.record(AuditEvent(verdict: verdict))
             onVerdict?(verdict, payload, heldChangeCount)
         }
         return verdict
+    }
+
+    /// Downgrade an enforcement action (block/redact/warn/quarantine) to `.audit`
+    /// for channels that don't actually enforce (everything except the clipboard),
+    /// so the reported/audited action matches what really happened on the endpoint.
+    static func effectiveVerdict(_ v: DLPVerdict, channel: Channel) -> DLPVerdict {
+        guard channel != .clipboard, v.action != .allow, v.action != .audit else { return v }
+        return DLPVerdict(
+            action: .audit, findings: v.findings, matchedRuleID: v.matchedRuleID,
+            reason: "Observed (\(channel.displayName) vector is audit-only, not enforced): \(v.reason)",
+            redactedContent: nil, riskScore: v.riskScore, context: v.context)
     }
 
     /// Apply clipboard enforcement. Returns the pasteboard change-count captured
