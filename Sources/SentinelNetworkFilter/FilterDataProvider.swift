@@ -37,7 +37,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
     /// Per-flow accumulated outbound buffer (for cumulative inspection). `seen`
     /// is the highest absolute offset accumulated, so a cumulative/re-delivered
     /// window isn't double-counted regardless of how the OS chunks the stream.
-    private struct FlowState { var buffer = Data(); var seen = 0 }
+    private struct FlowState { var buffer = Data(); var seen = 0; var contentAudited = false }
     private let stateLock = NSLock()
     private var flows: [String: FlowState] = [:]
 
@@ -56,6 +56,18 @@ public final class FilterDataProvider: NEFilterDataProvider {
     private func recordTierAudit(host: String) {
         guard let auditSink else { return }
         auditSink.record(AuditEvent(verdict: engine.inspect("", channel: .network, host: host, sourceApp: nil)))
+    }
+
+    /// Record the FIRST findings-bearing content verdict for a flow exactly once
+    /// (so audit-level findings reach SIEM too, without per-chunk spam).
+    private func auditContentOnce(_ verdict: DLPVerdict, for key: String) {
+        stateLock.lock()
+        var st = flows[key] ?? FlowState()
+        let already = st.contentAudited
+        st.contentAudited = true
+        flows[key] = st
+        stateLock.unlock()
+        if !already { auditSink?.record(AuditEvent(verdict: verdict)) }
     }
 
     // MARK: - Lifecycle
@@ -114,19 +126,20 @@ public final class FilterDataProvider: NEFilterDataProvider {
         let buffer = accumulate(readBytes, offset: offset, for: key)
         let host = Self.hostname(for: flow)
 
-        // Capture the sensitive verdict (if any) so we audit ONCE on drop, rather
-        // than per clean chunk — the engine has no sink, so inspect() here does
-        // not record anything by itself.
-        var sensitiveVerdict: DLPVerdict?
+        // The engine has no sink, so inspect() here records nothing by itself.
+        // We audit the FIRST findings-bearing content verdict once per flow — this
+        // covers audit-level findings (allowed) as well as drops, without one
+        // event per clean chunk.
         let decision = Self.decideOutbound(
             buffer: buffer, windowCount: readBytes.count, peekChunk: peekChunk, maxAccumulate: maxAccumulate
         ) { text in
+            let verdict = self.engine.inspect(text, channel: .network, host: host, sourceApp: nil)
+            if verdict.hasFindings || verdict.action != .allow {
+                self.auditContentOnce(verdict, for: key)
+            }
             // "Sensitive" = anything a content filter can't apply in-place
             // (redact/warn) or that must be stopped (block/quarantine).
-            let verdict = self.engine.inspect(text, channel: .network, host: host, sourceApp: nil)
-            let sensitive = verdict.action != .allow && verdict.action != .audit
-            if sensitive { sensitiveVerdict = verdict }
-            return sensitive
+            return verdict.action != .allow && verdict.action != .audit
         }
 
         switch decision {
@@ -136,8 +149,8 @@ public final class FilterDataProvider: NEFilterDataProvider {
             return .allow()
         case .drop:
             // Fail safe: a content filter cannot rewrite bytes or prompt the user,
-            // so any non-allow/audit verdict drops the flow. Audit the block ONCE.
-            if let verdict = sensitiveVerdict { auditSink?.record(AuditEvent(verdict: verdict)) }
+            // so any non-allow/audit verdict drops the flow. The causing verdict
+            // was already audited via auditContentOnce above.
             clear(key)
             return .drop()
         case let .passWindow(passBytes, peekBytes):
