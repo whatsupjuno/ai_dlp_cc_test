@@ -28,13 +28,7 @@ public struct DetectionEngine: Sendable {
 
     /// Run all detectors and return the resolved finding set, sorted by position.
     public func scan(_ text: String, context: InspectionContext) -> [Finding] {
-        let input: String
-        if maxInspectLength > 0, text.utf16.count > maxInspectLength {
-            let end = text.utf16.index(text.utf16.startIndex, offsetBy: maxInspectLength)
-            input = String(text.utf16[text.utf16.startIndex..<end]) ?? text
-        } else {
-            input = text
-        }
+        let input = Self.truncate(text, toUTF16: maxInspectLength)
 
         var raw: [Finding] = []
         for detector in detectors {
@@ -47,6 +41,25 @@ public struct DetectionEngine: Sendable {
     /// Convenience: a `DetectionSummary` aggregating findings by category/severity.
     public func summarize(_ findings: [Finding]) -> DetectionSummary {
         DetectionSummary(findings: findings)
+    }
+
+    // MARK: - Inspection-length cap
+
+    /// Truncate `text` to at most `limit` UTF-16 units, snapping back to a valid
+    /// `Character` boundary. A naive `String(text.utf16[..<end])` returns `nil`
+    /// when the cut lands between the two code units of a supplementary scalar
+    /// (e.g. an emoji), and the old fallback then scanned the *entire* text —
+    /// letting a crafted payload defeat the inspection cap. Walking back to a
+    /// real boundary keeps the cap honest.
+    static func truncate(_ text: String, toUTF16 limit: Int) -> String {
+        guard limit > 0, text.utf16.count > limit else { return text }
+        let utf16 = text.utf16
+        var cut = utf16.index(utf16.startIndex, offsetBy: limit)
+        while cut > utf16.startIndex, String.Index(cut, within: text) == nil {
+            cut = utf16.index(before: cut)
+        }
+        guard let boundary = String.Index(cut, within: text) else { return text }
+        return String(text[..<boundary])
     }
 
     // MARK: - Overlap resolution

@@ -77,6 +77,30 @@ final class DetectionEngineTests: XCTestCase {
         XCTAssertTrue(f.contains { $0.category == .identity }, "NER should find a person/identity entity")
     }
 
+    func testTruncateNoLimitOrShort() {
+        XCTAssertEqual(DetectionEngine.truncate("hello", toUTF16: 0), "hello")
+        XCTAssertEqual(DetectionEngine.truncate("hi", toUTF16: 100), "hi")
+    }
+
+    func testTruncateSnapsBackOnSplitSurrogate() {
+        // 49 'a's, then an emoji occupying UTF-16 offsets 49–50. A cut at 50
+        // lands between the surrogate halves.
+        let text = String(repeating: "a", count: 49) + "😀 123-45-6789"
+        let out = DetectionEngine.truncate(text, toUTF16: 50)
+        XCTAssertLessThanOrEqual(out.utf16.count, 50)
+        XCTAssertFalse(out.contains("😀"), "emoji split by the cut must be excluded")
+        XCTAssertFalse(out.contains("123-45-6789"))
+        XCTAssertNotEqual(out, text, "must NOT fall back to the full text (cap bypass)")
+    }
+
+    func testCapNotBypassedBySurrogateAtCut() {
+        let engine = DetectionEngine(detectors: [RegexDetector(rules: PatternLibrary.builtin)],
+                                     maxInspectLength: 50, contextBooster: nil)
+        let text = String(repeating: "a", count: 49) + "😀 SSN 123-45-6789"
+        let f = engine.scan(text, context: ctx())
+        XCTAssertFalse(f.contains { $0.type.id == "us-ssn" }, "SSN past the cap must not be scanned")
+    }
+
     func testMaxInspectLengthTruncates() {
         let padding = String(repeating: "x", count: 1000)
         let engine = DetectionEngine(detectors: [RegexDetector(rules: PatternLibrary.builtin)], maxInspectLength: 100)

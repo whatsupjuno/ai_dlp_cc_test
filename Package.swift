@@ -71,5 +71,12 @@ let package = Package(
                 .swiftLanguageMode(.v5),
             ]
         ),
+        .testTarget(
+            name: "SentinelNetworkFilterTests",
+            dependencies: ["SentinelNetworkFilter", "DLPCore"],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+            ]
+        ),
     ]
 )

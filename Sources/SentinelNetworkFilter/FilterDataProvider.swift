@@ -76,29 +76,55 @@ public final class FilterDataProvider: NEFilterDataProvider {
     ) -> NEFilterDataVerdict {
         let key = Self.key(for: flow)
         let buffer = append(readBytes, for: key)
+        let host = Self.hostname(for: flow)
 
-        // Only attempt classification on data that decodes as UTF-8 text; TLS
-        // ciphertext won't, and we simply let it pass (destination tier already
-        // governed the connection in handleNewFlow).
-        guard let text = String(data: buffer, encoding: .utf8), looksLikeText(text) else {
-            return .allow()
+        let decision = Self.decideOutbound(
+            buffer: buffer, chunkBytes: readBytes.count, offset: offset, maxAccumulate: maxAccumulate
+        ) { text in
+            // "Sensitive" = anything a content filter can't apply in-place
+            // (redact/warn) or that must be stopped (block/quarantine).
+            let verdict = self.engine.inspect(text, channel: .network, host: host, sourceApp: nil)
+            return verdict.action != .allow && verdict.action != .audit
         }
 
-        let host = Self.hostname(for: flow) ?? ""
-        let verdict = engine.inspect(text, channel: .network, host: host.isEmpty ? nil : host,
-                                     sourceApp: Self.sourceApp(for: flow))
-
-        // A content filter can only pass or drop a flow — it cannot rewrite the
-        // outbound bytes (to redact) or prompt the user (to warn). So any verdict
-        // other than allow/audit must FAIL SAFE by dropping the flow; otherwise a
-        // `.redact`/`.warn` result would silently send the sensitive bytes intact.
-        switch verdict.action {
-        case .allow, .audit:
+        switch decision {
+        case .allow:
+            clear(key)
             return .allow()
-        case .redact, .warn, .block, .quarantine:
+        case .drop:
+            // Fail safe: a content filter cannot rewrite bytes or prompt the
+            // user, so a redact/warn/block verdict must drop the flow.
             clear(key)
             return .drop()
+        case let .keepPeeking(passBytes, peekBytes):
+            // Pass the inspected bytes but keep receiving more — the sensitive
+            // content may appear in a later chunk after a clean prefix.
+            return NEFilterDataVerdict(passBytes: passBytes, peekBytes: peekBytes)
         }
+    }
+
+    /// Pure, testable decision for an outbound chunk. Decoupled from the
+    /// NetworkExtension types so the peek/drop/allow logic can be unit-tested.
+    enum OutboundDecision: Equatable {
+        case allow
+        case drop
+        case keepPeeking(passBytes: Int, peekBytes: Int)
+    }
+
+    static func decideOutbound(
+        buffer: Data, chunkBytes: Int, offset: Int, maxAccumulate: Int,
+        isSensitive: (String) -> Bool
+    ) -> OutboundDecision {
+        if let text = String(data: buffer, encoding: .utf8), looksLikeText(text) {
+            if isSensitive(text) { return .drop }
+            if buffer.count >= maxAccumulate { return .allow }   // cap reached, stop inspecting
+            return .keepPeeking(passBytes: chunkBytes, peekBytes: maxAccumulate - buffer.count)
+        }
+        // Undecodable buffer.
+        if offset == 0 { return .allow }                          // first chunk not UTF-8 ⇒ TLS ciphertext
+        if buffer.count >= maxAccumulate { return .allow }
+        // Possibly a multibyte sequence split across chunks — keep peeking.
+        return .keepPeeking(passBytes: chunkBytes, peekBytes: maxAccumulate - buffer.count)
     }
 
     public override func handleOutboundDataComplete(for flow: NEFilterFlow) -> NEFilterDataVerdict {
@@ -146,7 +172,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
     }
 
     /// Heuristic: avoid running the full engine over obvious binary blobs.
-    private func looksLikeText(_ s: String) -> Bool {
+    static func looksLikeText(_ s: String) -> Bool {
         guard !s.isEmpty else { return false }
         let sample = s.prefix(2048)
         let control = sample.unicodeScalars.filter { $0.value < 9 || ($0.value > 13 && $0.value < 32) }.count

@@ -73,6 +73,7 @@ public final class FileSystemMonitor: Monitor, @unchecked Sendable {
         }
 
         let flags = UInt32(
+            kFSEventStreamCreateFlagUseCFTypes |   // eventPaths delivered as a CFArray<CFString>
             kFSEventStreamCreateFlagFileEvents |
             kFSEventStreamCreateFlagNoDefer |
             kFSEventStreamCreateFlagIgnoreSelf
