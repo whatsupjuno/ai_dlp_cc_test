@@ -112,9 +112,18 @@ public final class FilterDataProvider: NEFilterDataProvider {
             recordTierAudit(host: host)
             return .drop()
 
-        case .sanctioned, .unknown:
-            // Approved or not-an-AI-service: pass without inspection overhead.
+        case .unknown:
+            // Not a recognized AI service: pass without inspection overhead.
             return .allow()
+
+        case .sanctioned:
+            // Approved for use, but STILL subject to content policy (block-secrets,
+            // redact-pii, …) on any plaintext — sanctioned ≠ unfiltered. No
+            // flow-creation audit (it's approved); content findings are still
+            // audited in handleOutboundData if any appear.
+            return .filterDataVerdict(
+                withFilterInbound: false, peekInboundBytes: 0,
+                filterOutbound: true, peekOutboundBytes: maxAccumulate)
 
         case .monitored, .unsanctioned:
             // Record the destination-tier egress ONCE now, at flow creation. The

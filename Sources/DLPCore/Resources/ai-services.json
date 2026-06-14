@@ -269,8 +269,7 @@
         "cdn.midjourney.com"
       ],
       "apiHosts": [
-        "midjourney.com",
-        "gateway.discord.gg"
+        "midjourney.com"
       ],
       "notes": "Image generation. Historically driven through Discord (so egress prompts/images ride discord.com / gateway.discord.gg - blocking Midjourney via Discord is impossible without blocking Discord entirely), now also a native web app at midjourney.com (alpha/web). Egress is text prompts and reference-image uploads; generated assets pull from cdn.midjourney.com. The Discord coupling is the key interception challenge. Default unsanctioned."
     },
