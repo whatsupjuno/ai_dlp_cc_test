@@ -3,23 +3,44 @@ import SwiftUI
 import Combine
 import DLPCore
 import DLPDaemon
+import SentinelNetworkFilter
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AgentModel()
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
     private var service: DLPService!
+    private var networkFilter: NetworkFilterController?
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusItem()
         setupPopover()
         startService()
+        activateNetworkFilter()
         refreshStaticInfo()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         service?.stop()
+    }
+
+    /// Activate + enable the NetworkExtension content filter so the network vector
+    /// is live (destination-tier enforcement). System-extension activation only
+    /// works from a signed, installed `.app` with the right entitlements (or via
+    /// MDM); when launched via `swift run` the executable isn't an `.app` bundle,
+    /// so we skip it and continue with clipboard protection rather than failing.
+    private func activateNetworkFilter() {
+        guard Bundle.main.bundlePath.hasSuffix(".app") else {
+            NSLog("Sentinel: network filter activation skipped — not running as a signed .app bundle")
+            return
+        }
+        let controller = NetworkFilterController(extensionIdentifier: "com.sentinel.dlp.agent.networkfilter")
+        controller.onStateChange = { state in
+            NSLog("Sentinel: network filter state = \(state)")
+        }
+        controller.activate()
+        networkFilter = controller
     }
 
     // MARK: - Status bar

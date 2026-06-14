@@ -51,7 +51,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "SentinelAgent",
-            dependencies: ["DLPCore", "DLPDaemon"],
+            dependencies: ["DLPCore", "DLPDaemon", "SentinelNetworkFilter"],
             swiftSettings: [
                 .swiftLanguageMode(.v5),
             ]
