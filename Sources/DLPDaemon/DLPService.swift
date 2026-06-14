@@ -151,10 +151,12 @@ public final class DLPService: @unchecked Sendable {
             sourceApp: payload.sourceApp
         )
         // Report the action that was ACTUALLY applied. Only the clipboard vector
-        // enforces (redact/block/warn); the filesystem vector is observe-only, so
-        // a block/redact there is downgraded to audit — neither users nor SIEM
-        // should see a false "blocked" for a file that was never touched.
-        let verdict = Self.effectiveVerdict(raw, channel: payload.channel)
+        // enforces (redact/block/warn) and only when enforcement is enabled; the
+        // filesystem vector and observe-mode clipboard are observe-only, so a
+        // block/redact there is downgraded to audit — neither users nor SIEM should
+        // see a false "blocked" for content that was never touched.
+        let willEnforce = payload.channel == .clipboard && isEnforcing
+        let verdict = Self.effectiveVerdict(raw, channel: payload.channel, enforced: willEnforce)
         let heldChangeCount = enforce(verdict, for: payload)
         if verdict.hasFindings || verdict.action != .allow {
             auditSink?.record(AuditEvent(verdict: verdict))
@@ -164,13 +166,18 @@ public final class DLPService: @unchecked Sendable {
     }
 
     /// Downgrade an enforcement action (block/redact/warn/quarantine) to `.audit`
-    /// for channels that don't actually enforce (everything except the clipboard),
-    /// so the reported/audited action matches what really happened on the endpoint.
-    static func effectiveVerdict(_ v: DLPVerdict, channel: Channel) -> DLPVerdict {
-        guard channel != .clipboard, v.action != .allow, v.action != .audit else { return v }
+    /// when it was NOT actually applied — i.e. the filesystem vector (observe-only)
+    /// or the clipboard in observe mode (enforcement off) — so the reported/audited
+    /// action matches what really happened on the endpoint. `enforced` is true only
+    /// when the channel actually applied the action.
+    static func effectiveVerdict(_ v: DLPVerdict, channel: Channel, enforced: Bool) -> DLPVerdict {
+        guard !enforced, v.action != .allow, v.action != .audit else { return v }
+        let why = channel == .clipboard
+            ? "observe mode, enforcement off"
+            : "\(channel.displayName) vector is audit-only"
         return DLPVerdict(
             action: .audit, findings: v.findings, matchedRuleID: v.matchedRuleID,
-            reason: "Observed (\(channel.displayName) vector is audit-only, not enforced): \(v.reason)",
+            reason: "Observed (\(why), not enforced): \(v.reason)",
             redactedContent: nil, riskScore: v.riskScore, context: v.context)
     }
 
