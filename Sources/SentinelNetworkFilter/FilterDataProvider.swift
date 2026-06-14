@@ -134,7 +134,11 @@ public final class FilterDataProvider: NEFilterDataProvider {
             buffer: buffer, windowCount: readBytes.count, peekChunk: peekChunk, maxAccumulate: maxAccumulate
         ) { text in
             let verdict = self.engine.inspect(text, channel: .network, host: host, sourceApp: nil)
-            if verdict.hasFindings || verdict.action != .allow {
+            // Gate the once-per-flow content audit STRICTLY on findings: with the
+            // default policy a clean chunk to an unsanctioned host still resolves
+            // to `.audit`, so keying off the action would let the first clean chunk
+            // consume the slot and suppress a later secret-bearing verdict.
+            if verdict.hasFindings {
                 self.auditContentOnce(verdict, for: key)
             }
             // "Sensitive" = anything a content filter can't apply in-place
