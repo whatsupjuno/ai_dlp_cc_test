@@ -37,7 +37,15 @@ public final class FilterDataProvider: NEFilterDataProvider {
     /// Per-flow accumulated outbound buffer (for cumulative inspection). `seen`
     /// is the highest absolute offset accumulated, so a cumulative/re-delivered
     /// window isn't double-counted regardless of how the OS chunks the stream.
-    private struct FlowState { var buffer = Data(); var seen = 0; var contentAudited = false }
+    private struct FlowState {
+        var buffer = Data()
+        var seen = 0
+        // Two independent once-per-flow audit slots: a low-value audit-level
+        // finding (e.g. a name) must not consume the slot that records the
+        // enforcement verdict (the secret that actually drops the flow).
+        var findingAudited = false
+        var enforcementAudited = false
+    }
     private let stateLock = NSLock()
     private var flows: [String: FlowState] = [:]
 
@@ -58,13 +66,20 @@ public final class FilterDataProvider: NEFilterDataProvider {
         auditSink.record(AuditEvent(verdict: engine.inspect("", channel: .network, host: host, sourceApp: nil)))
     }
 
-    /// Record the FIRST findings-bearing content verdict for a flow exactly once
-    /// (so audit-level findings reach SIEM too, without per-chunk spam).
-    private func auditContentOnce(_ verdict: DLPVerdict, for key: String) {
+    private enum AuditSlot { case finding, enforcement }
+
+    /// Record a content verdict once per flow per slot. The `finding` slot covers
+    /// the first audit-level finding; the `enforcement` slot covers the first
+    /// block/redact/warn/quarantine verdict — kept separate so a low-value finding
+    /// can't suppress the secret-bearing verdict that drops the flow.
+    private func auditOnce(_ verdict: DLPVerdict, for key: String, slot: AuditSlot) {
         stateLock.lock()
         var st = flows[key] ?? FlowState()
-        let already = st.contentAudited
-        st.contentAudited = true
+        let already: Bool
+        switch slot {
+        case .finding:     already = st.findingAudited;     st.findingAudited = true
+        case .enforcement: already = st.enforcementAudited; st.enforcementAudited = true
+        }
         flows[key] = st
         stateLock.unlock()
         if !already { auditSink?.record(AuditEvent(verdict: verdict)) }
@@ -134,16 +149,18 @@ public final class FilterDataProvider: NEFilterDataProvider {
             buffer: buffer, windowCount: readBytes.count, peekChunk: peekChunk, maxAccumulate: maxAccumulate
         ) { text in
             let verdict = self.engine.inspect(text, channel: .network, host: host, sourceApp: nil)
-            // Gate the once-per-flow content audit STRICTLY on findings: with the
-            // default policy a clean chunk to an unsanctioned host still resolves
-            // to `.audit`, so keying off the action would let the first clean chunk
-            // consume the slot and suppress a later secret-bearing verdict.
-            if verdict.hasFindings {
-                self.auditContentOnce(verdict, for: key)
-            }
             // "Sensitive" = anything a content filter can't apply in-place
             // (redact/warn) or that must be stopped (block/quarantine).
-            return verdict.action != .allow && verdict.action != .audit
+            let isEnforcement = verdict.action != .allow && verdict.action != .audit
+            if isEnforcement {
+                // The verdict that will drop the flow — its own slot.
+                self.auditOnce(verdict, for: key, slot: .enforcement)
+            } else if verdict.hasFindings {
+                // A low-value audit-level finding (e.g. a name). Clean chunks have
+                // no findings, so they never consume this slot.
+                self.auditOnce(verdict, for: key, slot: .finding)
+            }
+            return isEnforcement
         }
 
         switch decision {
@@ -154,7 +171,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
         case .drop:
             // Fail safe: a content filter cannot rewrite bytes or prompt the user,
             // so any non-allow/audit verdict drops the flow. The causing verdict
-            // was already audited via auditContentOnce above.
+            // was already recorded via the enforcement audit slot above.
             clear(key)
             return .drop()
         case let .passWindow(passBytes, peekBytes):
