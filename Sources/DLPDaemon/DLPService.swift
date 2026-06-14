@@ -100,41 +100,48 @@ public final class DLPService: @unchecked Sendable {
     // MARK: - Lifecycle
 
     public func start() throws {
+        var built: [Monitor] = []
+        var clipboard: ClipboardMonitor?
         if config.enableClipboard {
             let cm = ClipboardMonitor(interval: config.clipboardInterval) { [weak self] payload in
                 self?.ingest(payload)
             }
-            clipboardMonitor = cm
-            monitors.append(cm)
+            clipboard = cm
+            built.append(cm)
         }
         if config.enableFileMonitoring, !config.watchedPaths.isEmpty {
-            let fm = FileSystemMonitor(paths: config.watchedPaths) { [weak self] payload in
+            built.append(FileSystemMonitor(paths: config.watchedPaths) { [weak self] payload in
                 self?.ingest(payload)
-            }
-            monitors.append(fm)
+            })
         }
 
         // Start monitors with rollback: if a later monitor fails to start, stop
         // the ones already running so we don't leave (e.g.) clipboard enforcement
-        // active in the background while the caller sees a startup failure.
+        // active in the background while the caller sees a startup failure. Only
+        // publish the monitors (under lock) once they have all started.
         var started: [Monitor] = []
         do {
-            for m in monitors {
+            for m in built {
                 try m.start()
                 started.append(m)
             }
         } catch {
             for m in started.reversed() { m.stop() }
-            monitors.removeAll()
-            clipboardMonitor = nil
             throw error
         }
+        lock.lock()
+        monitors = built
+        clipboardMonitor = clipboard
+        lock.unlock()
     }
 
     public func stop() {
-        for m in monitors { m.stop() }
+        lock.lock()
+        let running = monitors
         monitors.removeAll()
         clipboardMonitor = nil
+        lock.unlock()
+        for m in running { m.stop() }
     }
 
     // MARK: - Inspection
@@ -150,14 +157,26 @@ public final class DLPService: @unchecked Sendable {
             host: nil,
             sourceApp: payload.sourceApp
         )
-        // Report the action that was ACTUALLY applied. Only the clipboard vector
-        // enforces (redact/block/warn) and only when enforcement is enabled; the
-        // filesystem vector and observe-mode clipboard are observe-only, so a
-        // block/redact there is downgraded to audit — neither users nor SIEM should
-        // see a false "blocked" for content that was never touched.
-        let willEnforce = payload.channel == .clipboard && isEnforcing
+        // Take ONE atomic snapshot of the enforcement state and the clipboard
+        // monitor, and use it for BOTH the reported/audited action and the actual
+        // application. Reading these twice (once to decide, once to apply) let a
+        // mid-ingest toggle — or an absent monitor — make the audit say "block"
+        // while nothing was touched. Only the clipboard vector enforces, and only
+        // when enforcement is on AND a monitor exists; everything else is
+        // observe-only and is downgraded to .audit.
+        lock.lock()
+        let enforcing = enforcementEnabled
+        let clipboard = clipboardMonitor
+        lock.unlock()
+
+        let willEnforce = payload.channel == .clipboard && enforcing && clipboard != nil
         let verdict = Self.effectiveVerdict(raw, channel: payload.channel, enforced: willEnforce)
-        let heldChangeCount = enforce(verdict, for: payload)
+
+        var heldChangeCount: Int?
+        if willEnforce, let clipboard {
+            heldChangeCount = applyClipboardEnforcement(verdict, using: clipboard)
+        }
+
         if verdict.hasFindings || verdict.action != .allow {
             auditSink?.record(AuditEvent(verdict: verdict))
             onVerdict?(verdict, payload, heldChangeCount)
@@ -181,32 +200,27 @@ public final class DLPService: @unchecked Sendable {
             redactedContent: nil, riskScore: v.riskScore, context: v.context)
     }
 
-    /// Apply clipboard enforcement. Returns the pasteboard change-count captured
-    /// immediately after replacing the clipboard (so the caller can bind a later
-    /// restore to this exact state), or `nil` if the clipboard wasn't touched.
-    @discardableResult
-    private func enforce(_ verdict: DLPVerdict, for payload: MonitoredPayload) -> Int? {
-        guard payload.channel == .clipboard,
-              isEnforcing,
-              let clipboard = clipboardMonitor else { return nil }
-
+    /// Apply the clipboard action. Only called when the caller has already
+    /// confirmed (atomically) that enforcement is on and a monitor exists, so the
+    /// verdict's action here is exactly what gets applied — keeping the reported
+    /// action and the actual mutation consistent. Returns the post-replace change-
+    /// count (for warn restore binding), or `nil` for allow/audit.
+    private func applyClipboardEnforcement(_ verdict: DLPVerdict, using clipboard: ClipboardMonitor) -> Int? {
         switch verdict.action {
         case .redact:
-            guard let redacted = verdict.redactedContent else { return nil }
-            return clipboard.replaceClipboard(with: redacted)
+            return verdict.redactedContent.map { clipboard.replaceClipboard(with: $0) }
         case .block, .quarantine:
             // Remove the sensitive value from the clipboard so it can't be pasted.
             return clipboard.replaceClipboard(with: "⚠︎ Sentinel DLP removed sensitive data from your clipboard.")
         case .warn:
             // `warn` permits only after explicit justification. The headless
             // service can't show that prompt synchronously, so it fails safe:
-            // remove the value from the clipboard (it must not stay silently
-            // pasteable) and surface it via onVerdict — with the post-replace
-            // change-count — so the menu-bar app can run the justification flow
-            // and restore the content on confirmation without a TOCTOU race.
+            // remove the value (it must not stay silently pasteable) and surface it
+            // via onVerdict — with the post-replace change-count — so the menu-bar
+            // app can run the justification flow and restore on confirmation.
             return clipboard.replaceClipboard(with: "⚠︎ Sentinel DLP held sensitive data — sharing this with an AI tool requires confirmation.")
         case .allow, .audit:
-            return nil // nothing to enforce on the clipboard
+            return nil
         }
     }
 }
