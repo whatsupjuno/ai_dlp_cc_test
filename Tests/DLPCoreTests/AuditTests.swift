@@ -70,6 +70,19 @@ final class AuditTests: XCTestCase {
         XCTAssertFalse(cef.contains("123-45-6789"))
     }
 
+    func testCEFEscapesSpacesInExtensionValues() {
+        let dest = Destination(host: "h",
+            service: AIService(id: "s", name: "GitHub Copilot", vendor: "GitHub", defaultTier: .monitored),
+            tier: .monitored, isAPIEndpoint: false)
+        let ctx = InspectionContext(channel: .network, destination: dest, sourceApp: "com.acme.app", user: "jane doe")
+        let v = DLPVerdict(action: .audit, findings: [], matchedRuleID: nil, reason: "r",
+                           redactedContent: nil, riskScore: 0.2, context: ctx)
+        let cef = CEFFormatter.format(AuditEvent(verdict: v))
+        XCTAssertTrue(cef.contains("dhost=GitHub\\ Copilot"), "destination space must be escaped")
+        XCTAssertTrue(cef.contains("suser=jane\\ doe"), "user space must be escaped")
+        XCTAssertFalse(cef.contains("dhost=GitHub Copilot"), "no raw space in extension value")
+    }
+
     func testInMemorySinkBounded() {
         let sink = InMemoryAuditSink(capacity: 10)
         for _ in 0..<25 { sink.record(AuditEvent(verdict: sampleVerdict())) }

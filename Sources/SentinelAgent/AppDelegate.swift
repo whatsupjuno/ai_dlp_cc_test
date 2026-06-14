@@ -104,9 +104,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func startService() {
         let auditSink = makeAuditSink()
         let engine = DLPEngine(configuration: DLPConfiguration(), auditSink: auditSink)
+
+        // Watch the user dirs where exports/downloads land before being uploaded.
+        // Filtered to existing paths so FSEvents startup can't fail the service
+        // (file reads remain TCC-gated and degrade gracefully until granted).
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let watched = ["Downloads", "Desktop", "Documents"]
+            .map { home.appendingPathComponent($0).path }
+            .filter { FileManager.default.fileExists(atPath: $0) }
+
         let svc = DLPService(
             engine: engine,
-            configuration: .init(enableClipboard: true, clipboardEnforcement: .enforce)
+            configuration: .init(
+                enableClipboard: true,
+                clipboardEnforcement: .enforce,
+                enableFileMonitoring: !watched.isEmpty,
+                watchedPaths: watched
+            )
         )
         // Capture only the (Sendable) model; the glyph refresh is driven by the
         // Combine subscription above, so no non-Sendable `self` is captured here.

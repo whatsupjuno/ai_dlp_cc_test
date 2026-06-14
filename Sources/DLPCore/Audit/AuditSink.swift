@@ -141,7 +141,13 @@ public enum CEFFormatter {
         s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "|", with: "\\|")
     }
     private static func escape(_ s: String) -> String {
-        s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "=", with: "\\=")
+        // Extension fields are space-joined `key=value` pairs, so a raw space in a
+        // value (e.g. "GitHub Copilot", "Unknown destination") would be parsed as
+        // a new token by space-splitting SIEM parsers and corrupt the fields.
+        // Escape backslash, '=', and spaces; collapse newlines.
+        s.replacingOccurrences(of: "\\", with: "\\\\")
+         .replacingOccurrences(of: "=", with: "\\=")
          .replacingOccurrences(of: "\n", with: " ")
+         .replacingOccurrences(of: " ", with: "\\ ")
     }
 }

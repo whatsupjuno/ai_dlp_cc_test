@@ -43,6 +43,13 @@ final class DLPEngineTests: XCTestCase {
         XCTAssertEqual(sink.events.first?.destinationTier, .blocked)
     }
 
+    func testBareBICTokenDoesNotTriggerFinancialWarning() {
+        // "PASSWORD" matches the BIC shape, but at low confidence it must not fire
+        // warn-financial (min medium) on ordinary clipboard text.
+        let v = DLPEngine().inspect("MEETING PASSWORD FOR TODAY", channel: .clipboard)
+        XCTAssertNotEqual(v.action, .warn)
+    }
+
     func testCleanTextAllows() {
         let engine = DLPEngine()
         let v = engine.inspect("the quick brown fox jumps over the lazy dog",
