@@ -87,11 +87,18 @@ public final class FilterDataProvider: NEFilterDataProvider {
         let host = Self.hostname(for: flow) ?? ""
         let verdict = engine.inspect(text, channel: .network, host: host.isEmpty ? nil : host,
                                      sourceApp: Self.sourceApp(for: flow))
-        if verdict.blocksEgress {
+
+        // A content filter can only pass or drop a flow — it cannot rewrite the
+        // outbound bytes (to redact) or prompt the user (to warn). So any verdict
+        // other than allow/audit must FAIL SAFE by dropping the flow; otherwise a
+        // `.redact`/`.warn` result would silently send the sensitive bytes intact.
+        switch verdict.action {
+        case .allow, .audit:
+            return .allow()
+        case .redact, .warn, .block, .quarantine:
             clear(key)
             return .drop()
         }
-        return .allow()
     }
 
     public override func handleOutboundDataComplete(for flow: NEFilterFlow) -> NEFilterDataVerdict {

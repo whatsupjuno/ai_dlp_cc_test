@@ -9,6 +9,10 @@
 <dict>
     <key>CFBundleIdentifier</key>
     <string>com.sentinel.dlp.agent.networkfilter</string>
+    <key>CFBundleExecutable</key>
+    <string>SentinelNetworkFilter</string>
+    <key>CFBundlePackageType</key>
+    <string>SYSX</string>
     <key>CFBundleName</key>
     <string>Sentinel Network Filter</string>
     <key>CFBundleShortVersionString</key>

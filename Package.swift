@@ -64,5 +64,12 @@ let package = Package(
                 .swiftLanguageMode(.v5),
             ]
         ),
+        .testTarget(
+            name: "DLPDaemonTests",
+            dependencies: ["DLPDaemon", "DLPCore"],
+            swiftSettings: [
+                .swiftLanguageMode(.v5),
+            ]
+        ),
     ]
 )

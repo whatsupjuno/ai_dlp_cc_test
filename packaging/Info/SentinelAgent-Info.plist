@@ -5,6 +5,10 @@
 <dict>
     <key>CFBundleIdentifier</key>
     <string>com.sentinel.dlp.agent</string>
+    <key>CFBundleExecutable</key>
+    <string>Sentinel</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
     <key>CFBundleName</key>
     <string>Sentinel AI-DLP</string>
     <key>CFBundleShortVersionString</key>

@@ -48,3 +48,8 @@ jobs:
           # Catalog + policy render without error.
           $BIN services > /dev/null
           $BIN policy > /dev/null
+          # Regression: a boolean flag before a positional path must read the
+          # file (not stdin) and still honour the flag.
+          printf 'ssn 123-45-6789' > /tmp/sample.txt
+          $BIN scan --json /tmp/sample.txt | head -c 1 | grep -q '{' \
+            || { echo "arg parser regression: --json consumed the path"; exit 1; }

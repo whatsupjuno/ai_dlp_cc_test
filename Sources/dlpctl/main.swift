@@ -9,13 +9,18 @@ struct Args {
     private var flags: Set<String> = []
     private var options: [String: String] = [:]
 
-    init(_ argv: [String]) {
+    /// Options that take a value. Everything else is a boolean flag, so a flag
+    /// followed by a positional (e.g. `scan --json file.env`) does NOT consume
+    /// the positional as its value.
+    static let valueOptions: Set<String> = ["host", "channel", "app", "interval"]
+
+    init(_ argv: [String], valueOptions: Set<String> = Args.valueOptions) {
         var i = 0
         while i < argv.count {
             let a = argv[i]
             if a.hasPrefix("--") {
                 let key = String(a.dropFirst(2))
-                if i + 1 < argv.count, !argv[i + 1].hasPrefix("--") {
+                if valueOptions.contains(key), i + 1 < argv.count, !argv[i + 1].hasPrefix("--") {
                     options[key] = argv[i + 1]; i += 2; continue
                 } else {
                     flags.insert(key)

@@ -16,6 +16,22 @@ public final class FileSystemMonitor: Monitor, @unchecked Sendable {
     private let maxFileSize: Int
     private let textExtensions: Set<String>
 
+    /// Extension-less secret files matched by full name (dotfiles).
+    static let secretDotfiles: Set<String> = [
+        ".env", ".npmrc", ".pgpass", ".netrc", ".htpasswd", ".dockercfg",
+    ]
+
+    /// Whether a path should be read and scanned. Dotfiles (`.env`, `.npmrc`, …)
+    /// have an empty `pathExtension`, so the extension allowlist alone would skip
+    /// the most common environment-secret file; we also match the last path
+    /// component, including `.env.local` / `.env.production` variants.
+    static func isInspectable(path: String, textExtensions: Set<String>) -> Bool {
+        let name = (path as NSString).lastPathComponent.lowercased()
+        let ext = (path as NSString).pathExtension.lowercased()
+        let isSecretDotfile = secretDotfiles.contains(name) || name.hasPrefix(".env.")
+        return textExtensions.contains(ext) || isSecretDotfile
+    }
+
     private var stream: FSEventStreamRef?
     private var selfRef: Unmanaged<FileSystemMonitor>?
     /// Debounce: avoid re-scanning the same path repeatedly within a short window.
@@ -102,9 +118,7 @@ public final class FileSystemMonitor: Monitor, @unchecked Sendable {
             kFSEventStreamEventFlagItemRenamed
         ) != 0
         guard isFile, mutated else { return }
-
-        let ext = (path as NSString).pathExtension.lowercased()
-        guard textExtensions.contains(ext) else { return }
+        guard Self.isInspectable(path: path, textExtensions: textExtensions) else { return }
 
         // Debounce identical paths within 2s.
         let now = Date()
