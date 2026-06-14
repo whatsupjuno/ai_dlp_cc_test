@@ -102,20 +102,34 @@ public final class EndpointSecurityMonitor {
         uploaderProcesses.contains { executablePath.contains($0) }
     }
 
+    private static let maxScanBytes = 1_000_000
+
     private func shouldAllowOpen(filePath: String, openerPath: String) -> Bool {
         // Gate ONLY known uploaders (browsers / AI clients). Editors, IDEs and
         // terminals reading the same sensitive file are always allowed — denying
         // them would break normal local development system-wide.
         guard Self.isUploaderProcess(openerPath) else { return true }
+        guard filePath.count < 4096 else { return true }
 
-        // Scan small text files; deny if the uploader is reading critical secrets.
-        // Real deployments cache verdicts and respect the AUTH deadline strictly.
-        guard filePath.count < 4096,
-              let data = FileManager.default.contents(atPath: filePath),
-              data.count < 1_000_000,
+        // Stat the size BEFORE loading bytes. This runs inside an AUTH_OPEN
+        // handler with a hard deadline, so reading a multi-GB file into memory
+        // would exhaust memory or blow the deadline. Files over the cap are passed
+        // (a documented residual at the ES enforcement point).
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: filePath),
+              let size = attrs[.size] as? Int, size > 0, size < Self.maxScanBytes else { return true }
+        guard let data = FileManager.default.contents(atPath: filePath),
               let text = String(data: data, encoding: .utf8) else { return true }
+
+        // ES can neither show a justification prompt nor rewrite the file before
+        // the uploader reads it, so it FAILS SAFE: any verdict that isn't
+        // allow/audit (block/quarantine/warn/redact) denies the open — otherwise
+        // a browser/AI client could upload the original sensitive file with no
+        // warning/redaction applied.
         let verdict = engine.inspect(text, channel: .file, host: nil)
-        if verdict.blocksEgress { onVerdict(verdict, filePath); return false }
+        if verdict.action != .allow, verdict.action != .audit {
+            onVerdict(verdict, filePath)
+            return false
+        }
         return true
     }
 
