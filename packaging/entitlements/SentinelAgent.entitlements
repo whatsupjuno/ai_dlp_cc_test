@@ -10,6 +10,13 @@
 <dict>
     <key>com.apple.developer.system-extension.install</key>
     <true/>
+    <!-- Required so the app can configure the content filter via NEFilterManager
+         (saveToPreferences). Without this the in-app activation path fails unless
+         the MDM WebContentFilter payload is installed separately. -->
+    <key>com.apple.developer.networking.networkextension</key>
+    <array>
+        <string>content-filter-provider-systemextension</string>
+    </array>
     <key>com.apple.security.application-groups</key>
     <array>
         <string>group.com.sentinel.dlp</string>

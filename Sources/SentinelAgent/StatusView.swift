@@ -5,12 +5,18 @@ import DLPCore
 struct StatusView: View {
     @EnvironmentObject var model: AgentModel
     var onToggleEnforcement: () -> Void
+    var onConfirmWarning: () -> Void
+    var onDismissWarning: () -> Void
     var onQuit: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
+            if let pending = model.pendingWarning {
+                warningBanner(pending)
+                Divider()
+            }
             stats
             Divider()
             activity
@@ -18,6 +24,28 @@ struct StatusView: View {
             footer
         }
         .frame(width: 380)
+    }
+
+    private func warningBanner(_ pending: AgentModel.PendingWarning) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                Text("Confirmation required").font(.subheadline.bold())
+            }
+            Text("\(pending.summary) was held before reaching \(pending.destination). Send it anyway?")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button(role: .destructive, action: onConfirmWarning) {
+                    Text("Send anyway").frame(maxWidth: .infinity)
+                }
+                Button(action: onDismissWarning) {
+                    Text("Keep blocked").frame(maxWidth: .infinity)
+                }
+            }
+            .controlSize(.small)
+        }
+        .padding(12)
+        .background(Color.orange.opacity(0.10))
     }
 
     private var header: some View {

@@ -68,6 +68,13 @@ public final class DLPService: @unchecked Sendable {
         return enforcementEnabled
     }
 
+    /// Restore content to the clipboard after the user justifies a `.warn`
+    /// verdict. `replaceClipboard` updates the monitor's change-count, so the
+    /// restored value is not re-inspected (no warn loop) — the user has confirmed.
+    public func confirmAndRestore(_ text: String) {
+        clipboardMonitor?.replaceClipboard(with: text)
+    }
+
     /// Hot-swap the engine (new policy / pattern pack) atomically.
     public func update(engine newEngine: DLPEngine) {
         lock.lock(); defer { lock.unlock() }

@@ -35,6 +35,17 @@ final class AgentModel: ObservableObject, @unchecked Sendable {
     @Published var warnedCount = 0
     @Published private(set) var recent: [Activity] = []
 
+    /// A `.warn` verdict awaiting the user's justify-or-keep-blocked decision.
+    /// Retains the original (sensitive) clipboard text so it can be restored on
+    /// confirmation; held only in memory and cleared as soon as the user decides.
+    struct PendingWarning: Identifiable {
+        let id = UUID()
+        let text: String
+        let summary: String
+        let destination: String
+    }
+    @Published var pendingWarning: PendingWarning?
+
     func record(_ verdict: DLPVerdict, payload: MonitoredPayload) {
         totalEvents += 1
         switch verdict.action {

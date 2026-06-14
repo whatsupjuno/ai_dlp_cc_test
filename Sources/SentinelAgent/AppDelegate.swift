@@ -63,6 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupPopover() {
         let view = StatusView(
             onToggleEnforcement: { [weak self] in self?.toggleEnforcement() },
+            onConfirmWarning: { [weak self] in self?.confirmPendingWarning() },
+            onDismissWarning: { [weak self] in self?.model.pendingWarning = nil },
             onQuit: { NSApplication.shared.terminate(nil) }
         ).environmentObject(model)
 
@@ -87,6 +89,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         service.setEnforcement(model.enforcing)
     }
 
+    /// User justified a warned action → restore the original content to the
+    /// clipboard so it can be pasted, and clear the pending prompt.
+    private func confirmPendingWarning() {
+        guard let pending = model.pendingWarning else { return }
+        service?.confirmAndRestore(pending.text)
+        model.pendingWarning = nil
+    }
+
     // MARK: - Service
 
     private func startService() {
@@ -101,6 +111,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         svc.onVerdict = { [model] verdict, payload in
             DispatchQueue.main.async {
                 model.record(verdict, payload: payload)
+                // A warn verdict already removed the value from the clipboard;
+                // retain the original so the user can justify and restore it.
+                if verdict.action == .warn {
+                    let types = Array(Set(verdict.findings.map(\.type.name))).sorted().joined(separator: ", ")
+                    model.pendingWarning = AgentModel.PendingWarning(
+                        text: payload.text,
+                        summary: types.isEmpty ? verdict.reason : types,
+                        destination: verdict.context.destination.displayName)
+                }
             }
         }
         do {
