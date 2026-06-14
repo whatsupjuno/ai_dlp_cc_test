@@ -92,6 +92,14 @@ find "$APP/Contents/Library/SystemExtensions" -maxdepth 1 -type d 2>/dev/null | 
     --sign "$SIGN_ID" "$ext"
 done
 
+# Sign the embedded CLI helper in Contents/MacOS BEFORE the outer bundle. Per
+# Apple TN2206 all nested code must already be signed before the app is signed,
+# otherwise notarization/Gatekeeper can reject the (unsigned/ad-hoc) helper.
+if [ -f "$APP/Contents/MacOS/dlpctl" ]; then
+  echo "  signing Contents/MacOS/dlpctl"
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP/Contents/MacOS/dlpctl"
+fi
+
 codesign --force --options runtime --timestamp \
   --entitlements "$ROOT/packaging/entitlements/SentinelAgent.entitlements" \
   --sign "$SIGN_ID" "$APP"

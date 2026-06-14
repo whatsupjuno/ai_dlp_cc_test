@@ -153,8 +153,15 @@ public final class FilterDataProvider: NEFilterDataProvider {
             // (redact/warn) or that must be stopped (block/quarantine).
             let isEnforcement = verdict.action != .allow && verdict.action != .audit
             if isEnforcement {
-                // The verdict that will drop the flow — its own slot.
-                self.auditOnce(verdict, for: key, slot: .enforcement)
+                // The network filter can only DROP — it can't redact or prompt —
+                // so record the action as BLOCK regardless of whether the policy
+                // said redact/warn/block. Otherwise SIEM shows REDACT/WARN for a
+                // flow that was actually blocked on the wire.
+                let asBlocked = DLPVerdict(
+                    action: .block, findings: verdict.findings, matchedRuleID: verdict.matchedRuleID,
+                    reason: verdict.reason, redactedContent: nil,
+                    riskScore: verdict.riskScore, context: verdict.context)
+                self.auditOnce(asBlocked, for: key, slot: .enforcement)
             } else if verdict.hasFindings {
                 // A low-value audit-level finding (e.g. a name). Clean chunks have
                 // no findings, so they never consume this slot.
