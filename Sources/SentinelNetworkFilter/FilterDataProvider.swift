@@ -25,17 +25,16 @@ public final class FilterDataProvider: NEFilterDataProvider {
     private let engine = FilterDataProvider.makeEngine()
 
     private let maxAccumulate = 64 * 1024
-    /// Bytes always held back while peeking. We release clean bulk so legitimate
-    /// (keep-alive) uploads aren't deadlocked, but keep a tail larger than any
-    /// detectable token so a secret straddling a callback boundary is caught
-    /// before its bytes are released. All detection patterns match within a few
-    /// hundred bytes (API keys, JWTs; PEM matches on its header), so 4 KiB is safe.
-    private let safeTail = 4 * 1024
+    /// Forward look-ahead requested per callback while a plaintext body is still
+    /// streaming under the cap. It only ever applies to bytes the client has NOT
+    /// sent yet, so (unlike a held tail) it can never withhold an already-sent
+    /// request tail and deadlock a keep-alive upload.
+    private let peekChunk = 4 * 1024
 
-    /// Per-flow outbound state. `seen` is the highest absolute offset accumulated
-    /// (so cumulative/re-delivered windows aren't double-counted); `released` is
-    /// how many absolute bytes we've already passed through.
-    private struct FlowState { var buffer = Data(); var seen = 0; var released = 0 }
+    /// Per-flow accumulated outbound buffer (for cumulative inspection). `seen`
+    /// is the highest absolute offset accumulated, so a cumulative/re-delivered
+    /// window isn't double-counted regardless of how the OS chunks the stream.
+    private struct FlowState { var buffer = Data(); var seen = 0 }
     private let stateLock = NSLock()
     private var flows: [String: FlowState] = [:]
 
@@ -105,12 +104,11 @@ public final class FilterDataProvider: NEFilterDataProvider {
         readBytes: Data
     ) -> NEFilterDataVerdict {
         let key = Self.key(for: flow)
-        let (buffer, released) = accumulate(readBytes, offset: offset, for: key)
+        let buffer = accumulate(readBytes, offset: offset, for: key)
         let host = Self.hostname(for: flow)
 
         let decision = Self.decideOutbound(
-            buffer: buffer, alreadyReleased: released, windowStart: offset,
-            windowCount: readBytes.count, safeTail: safeTail, maxAccumulate: maxAccumulate
+            buffer: buffer, windowCount: readBytes.count, peekChunk: peekChunk, maxAccumulate: maxAccumulate
         ) { text in
             // "Sensitive" = anything a content filter can't apply in-place
             // (redact/warn) or that must be stopped (block/quarantine).
@@ -120,47 +118,62 @@ public final class FilterDataProvider: NEFilterDataProvider {
 
         switch decision {
         case .allowAll:
-            // Release everything buffered + the rest of the flow, stop inspecting
-            // (ciphertext, or inspected up to the cap).
+            // Ciphertext, or inspected up to the cap: release + stop inspecting.
             clear(key)
             return .allow()
         case .drop:
             // Fail safe: a content filter cannot rewrite bytes or prompt the user,
-            // so a redact/warn/block verdict drops the (still-held) flow.
+            // so any non-allow/audit verdict drops the flow.
             clear(key)
             return .drop()
-        case let .passPartial(passBytes, peekBytes):
-            // Release clean bulk but hold back `safeTail`, so legitimate uploads
-            // flow while a boundary-split secret is still catchable next callback.
-            setReleased(offset + passBytes, for: key)
+        case let .passWindow(passBytes, peekBytes):
+            // Release the ENTIRE current window synchronously (never withhold an
+            // already-sent byte → no keep-alive deadlock) and request a small
+            // forward look-ahead so we keep inspecting if the body keeps streaming.
             return NEFilterDataVerdict(passBytes: passBytes, peekBytes: peekBytes)
         }
     }
 
+    // LIMITATION (network content path — by design; see PR & docs/ARCHITECTURE.md):
+    // We release every inspected outbound window synchronously (passBytes == the
+    // whole current window) and NEVER hold a trailing slice. peekBytes is a
+    // forward look-ahead only — per NEFilterDataProvider.h the next callback fires
+    // only when the client sends more bytes, so withholding an already-sent tail
+    // (passBytes < window) would deadlock a keep-alive upload, which we refuse to
+    // do. Consequences: (1) a plaintext secret split across an outbound window
+    // boundary can leak its first fragment before the flow is dropped (the flow is
+    // still killed, but bytes are already out); (2) bodies past the 64 KiB cap pass
+    // unclassified; (3) TLS traffic is never content-inspected on the wire and is
+    // governed solely by destination-tier enforcement in handleNewFlow — plaintext
+    // content DLP authoritatively lives on the clipboard/file/ES vectors. The
+    // verdict byte-semantics are validated against the SDK header + unit tests on
+    // decideOutbound only; re-verify on a signed build on real hardware before any
+    // drop/enforcement ships on the network path (prefer audit-only until then).
+    // If window-boundary split coverage is later mandated, the ONLY option is the
+    // async pauseVerdict + resumeFlow path with an out-of-band idle timer.
+
     /// Pure, testable decision over the cumulative outbound buffer. Decoupled
-    /// from NetworkExtension types so the hold/drop/allow logic is unit-tested.
+    /// from NetworkExtension types so the allow/drop/pass logic is unit-tested.
     enum OutboundDecision: Equatable {
-        case allowAll                               // release everything, stop inspecting
-        case drop                                   // drop the held flow
-        case passPartial(passBytes: Int, peekBytes: Int) // release bulk, hold safeTail
+        case allowAll                                  // release everything, stop inspecting
+        case drop                                      // drop the flow (fail safe)
+        case passWindow(passBytes: Int, peekBytes: Int) // release this window, peek ahead
     }
 
     static func decideOutbound(
-        buffer: Data, alreadyReleased: Int, windowStart: Int, windowCount: Int,
-        safeTail: Int, maxAccumulate: Int, isSensitive: (String) -> Bool
+        buffer: Data, windowCount: Int, peekChunk: Int, maxAccumulate: Int,
+        isSensitive: (String) -> Bool
     ) -> OutboundDecision {
-        guard !buffer.isEmpty else { return .passPartial(passBytes: 0, peekBytes: safeTail) }
+        guard !buffer.isEmpty else { return .passWindow(passBytes: 0, peekBytes: peekChunk) }
         // Lossy decode so a multibyte char split at the buffer end becomes U+FFFD
         // rather than failing the whole decode; TLS/binary still reads as noise.
         let text = String(decoding: buffer, as: UTF8.self)
-        guard Self.looksLikeText(text) else { return .allowAll }    // ciphertext/binary — don't stall
+        guard Self.looksLikeText(text) else { return .allowAll }   // ciphertext/binary — don't stall
         if isSensitive(text) { return .drop }
-        if buffer.count >= maxAccumulate { return .allowAll }       // inspected up to the cap; release
-        // Clean and under the cap: release everything except the trailing
-        // `safeTail` bytes; pass only the not-yet-released portion of this window.
-        let targetReleased = max(alreadyReleased, buffer.count - safeTail)
-        let passBytes = max(0, min(windowCount, targetReleased - windowStart))
-        return .passPartial(passBytes: passBytes, peekBytes: safeTail + maxAccumulate)
+        if buffer.count >= maxAccumulate { return .allowAll }      // inspected up to the cap; release
+        // Clean and under the cap: pass the whole current window, peek a little
+        // further so subsequent streamed bytes are still inspected.
+        return .passWindow(passBytes: windowCount, peekBytes: peekChunk)
     }
 
     public override func handleOutboundDataComplete(for flow: NEFilterFlow) -> NEFilterDataVerdict {
@@ -173,8 +186,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
     /// Append the genuinely-new portion of `data` to the flow buffer (bounded by
     /// `maxAccumulate`), de-duplicating any bytes at/below `seen` so both
     /// "new-window" and "cumulative re-delivery" chunking styles are handled.
-    /// Returns the cumulative buffer and how many bytes have already been released.
-    private func accumulate(_ data: Data, offset: Int, for key: String) -> (buffer: Data, released: Int) {
+    private func accumulate(_ data: Data, offset: Int, for key: String) -> Data {
         stateLock.lock(); defer { stateLock.unlock() }
         var st = flows[key] ?? FlowState()
         let skip = max(0, st.seen - offset)
@@ -185,12 +197,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
             st.seen = max(st.seen, offset + data.count)
             flows[key] = st
         }
-        return (st.buffer, st.released)
-    }
-
-    private func setReleased(_ value: Int, for key: String) {
-        stateLock.lock(); defer { stateLock.unlock() }
-        if var st = flows[key] { st.released = max(st.released, value); flows[key] = st }
+        return st.buffer
     }
 
     private func clear(_ key: String) {

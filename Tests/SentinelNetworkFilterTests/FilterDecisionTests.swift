@@ -2,25 +2,27 @@ import XCTest
 import Foundation
 @testable import SentinelNetworkFilter
 
-/// Tests for the pure outbound decision logic (tail-hold: release clean bulk,
-/// hold a safe tail, drop on detection) without NetworkExtension flow objects.
+/// Tests for the pure outbound decision logic. The contract: release every
+/// inspected window synchronously (never withhold an already-sent byte, so a
+/// keep-alive upload can never deadlock), drop on detection, allow ciphertext
+/// and over-cap bodies. Destination-tier enforcement (handleNewFlow) is the
+/// actual guarantee; this is best-effort plaintext inspection beneath it.
 final class FilterDecisionTests: XCTestCase {
 
     private let cap = 4096
-    private let tail = 16
+    private let peek = 1024
     private let never: (String) -> Bool = { _ in false }
     private let always: (String) -> Bool = { _ in true }
 
-    private func decide(_ buffer: Data, released: Int = 0, start: Int = 0, count: Int? = nil,
+    private func decide(_ buffer: Data, windowCount: Int? = nil,
                         sensitive: @escaping (String) -> Bool) -> FilterDataProvider.OutboundDecision {
         FilterDataProvider.decideOutbound(
-            buffer: buffer, alreadyReleased: released, windowStart: start,
-            windowCount: count ?? buffer.count, safeTail: tail, maxAccumulate: cap,
-            isSensitive: sensitive)
+            buffer: buffer, windowCount: windowCount ?? buffer.count,
+            peekChunk: peek, maxAccumulate: cap, isSensitive: sensitive)
     }
 
-    func testEmptyBufferHolds() {
-        XCTAssertEqual(decide(Data(), sensitive: never), .passPartial(passBytes: 0, peekBytes: tail))
+    func testEmptyBufferAsksForMore() {
+        XCTAssertEqual(decide(Data(), sensitive: never), .passWindow(passBytes: 0, peekBytes: peek))
     }
 
     func testCiphertextAllowsAll() {
@@ -32,36 +34,30 @@ final class FilterDecisionTests: XCTestCase {
         XCTAssertEqual(decide(Data("a secret prompt".utf8), sensitive: always), .drop)
     }
 
-    func testSmallCleanBufferHeld() {
-        // Under the safe tail ⇒ nothing released yet (passBytes 0).
-        let data = Data("0123456789".utf8) // 10 bytes < tail(16)
-        XCTAssertEqual(decide(data, sensitive: never), .passPartial(passBytes: 0, peekBytes: tail + cap))
+    func testCleanWindowReleasedWholeNotHeld() {
+        // The entire current window is passed (no withheld tail → no deadlock).
+        let data = Data("POST /v1/chat HTTP/1.1\r\n\r\nhello world".utf8)
+        XCTAssertEqual(decide(data, sensitive: never),
+                       .passWindow(passBytes: data.count, peekBytes: peek))
     }
 
-    func testLargeCleanBufferReleasesBulkButHoldsTail() {
-        // 1000 clean bytes, tail 16 ⇒ release 984, hold 16 (no deadlock).
-        let data = Data(repeating: 0x61, count: 1000)
-        XCTAssertEqual(decide(data, sensitive: never), .passPartial(passBytes: 984, peekBytes: tail + cap))
-    }
-
-    func testIncrementalReleaseAcrossWindows() {
-        // Already released 984; new window [984, 1004). Release 4 more, hold 16.
-        let data = Data(repeating: 0x61, count: 1004)
-        XCTAssertEqual(decide(data, released: 984, start: 984, count: 20, sensitive: never),
-                       .passPartial(passBytes: 4, peekBytes: tail + cap))
+    func testSmallFinalWindowStillFullyReleased() {
+        // A short clean POST body must be released in full (regression for the
+        // round-6 hold-all deadlock and round-7 tail stall).
+        let data = Data("hi".utf8) // 2 bytes, well under any tail
+        XCTAssertEqual(decide(data, sensitive: never),
+                       .passWindow(passBytes: 2, peekBytes: peek))
     }
 
     func testCleanAtCapAllowsAll() {
         XCTAssertEqual(decide(Data(repeating: 0x61, count: cap), sensitive: never), .allowAll)
     }
 
-    func testSplitSecretFirstFragmentNotReleased() {
-        // codex P1 (round 5): a small first fragment of a secret must be held.
-        let fragment1 = Data("0123456".utf8) // < tail
-        XCTAssertEqual(decide(fragment1, sensitive: never), .passPartial(passBytes: 0, peekBytes: tail + cap),
-                       "small first fragment must be held, not released")
-        let combined = fragment1 + Data("789secret".utf8)
-        XCTAssertEqual(decide(combined, sensitive: always), .drop,
-                       "combined buffer dropped; the held fragment was never released")
+    func testWindowCountDistinctFromBufferLength() {
+        // Cumulative buffer is larger than the current window; passBytes tracks
+        // the current window, not the whole buffer.
+        let buffer = Data(repeating: 0x61, count: 100)
+        XCTAssertEqual(decide(buffer, windowCount: 30, sensitive: never),
+                       .passWindow(passBytes: 30, peekBytes: peek))
     }
 }

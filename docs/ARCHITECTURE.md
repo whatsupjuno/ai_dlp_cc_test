@@ -112,7 +112,30 @@ plaintext it is additionally classified, but for TLS it is governed by tier.
   again" across events via the fingerprint without ever storing plaintext.
 - `MultiAuditSink` fans out to local + remote (e.g. a webhook) simultaneously.
 
-## 7. Performance
+## 7. Network content-path limitations (by design)
+
+The `NEFilterDataProvider` is a **destination-tier enforcer first**; outbound
+*content* inspection is best-effort beneath that guarantee:
+
+- **No held tail / no deadlock.** Each inspected outbound window is released
+  synchronously (`passBytes == window`). A content filter has no per-request
+  "outbound complete" signal on keep-alive connections, so withholding an
+  already-sent tail to catch a boundary-split secret would stall legitimate
+  uploads. We refuse to do that.
+- **Residual:** a plaintext secret split exactly across an outbound window
+  boundary can leak its first fragment before the flow is dropped. Bodies past
+  the 64 KiB cap pass unclassified.
+- **TLS is opaque.** Real AI traffic is HTTPS, so the wire bytes are ciphertext;
+  those flows are governed solely by destination-tier policy in `handleNewFlow`
+  (block/audit by service). Authoritative plaintext content DLP lives on the
+  **clipboard / file / Endpoint-Security** vectors.
+- **Verification:** the verdict byte-semantics are validated against the SDK
+  header + unit tests on the pure `decideOutbound`. They must be re-verified on a
+  signed build on real hardware before any drop/enforcement ships on the network
+  path — **prefer audit-only there until then**. Window-boundary split coverage,
+  if ever mandated, requires the async `pauseVerdict` + `resumeFlow` path.
+
+## 8. Performance
 
 - Detection is linear in input size; each rule has a per-scan match cap and the
   engine has an inspection-length cap (network sets 64 KB).
