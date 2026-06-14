@@ -50,6 +50,19 @@ final class DLPEngineTests: XCTestCase {
         XCTAssertNotEqual(v.action, .warn)
     }
 
+    func testRedactEscalatesToBlockWhenTruncated() {
+        // PII (→ redact) in the inspected prefix, then a long uninspected tail.
+        // Redaction can't be trusted past the cap, so the action must escalate to
+        // block rather than emit the full text with the tail intact.
+        var config = DLPConfiguration()
+        config.maxInspectLength = 40
+        let engine = DLPEngine(configuration: config)
+        let text = "email a@b.com " + String(repeating: "x", count: 200)
+        let v = engine.inspect(text, channel: .clipboard)
+        XCTAssertEqual(v.action, .block, "truncated redact must escalate to block")
+        XCTAssertNil(v.redactedContent)
+    }
+
     func testCleanTextAllows() {
         let engine = DLPEngine()
         let v = engine.inspect("the quick brown fox jumps over the lazy dog",

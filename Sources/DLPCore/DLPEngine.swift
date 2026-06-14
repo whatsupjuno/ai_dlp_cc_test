@@ -79,13 +79,26 @@ public struct DLPEngine: Sendable {
         let decision = policyEngine.evaluate(findings: findings, context: context)
         let risk = RiskScorer.score(findings: findings, context: context)
 
-        let redacted = decision.action == .redact ? redactor.redact(text, findings: findings) : nil
+        var action = decision.action
+        var reason = decision.reason
+
+        // If inspection was truncated to a prefix (text exceeds maxInspectLength),
+        // the uninspected remainder may hold undetected secrets. We therefore can't
+        // safely REDACT — emitting the full text with only prefix spans removed
+        // would leak anything after the cap — so escalate redact → block.
+        let truncated = detection.maxInspectLength > 0 && text.utf16.count > detection.maxInspectLength
+        if truncated, action == .redact {
+            action = .block
+            reason = "Content exceeds the inspection limit; the uninspected remainder can't be safely redacted — blocked. (\(reason))"
+        }
+
+        let redacted = action == .redact ? redactor.redact(text, findings: findings) : nil
 
         let verdict = DLPVerdict(
-            action: decision.action,
+            action: action,
             findings: findings,
             matchedRuleID: decision.matchedRuleID,
-            reason: decision.reason,
+            reason: reason,
             redactedContent: redacted,
             riskScore: risk,
             context: context
