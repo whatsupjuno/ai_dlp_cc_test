@@ -31,16 +31,12 @@ public enum PatternLibrary {
     ]
 
     private static func loadBuiltin() -> [PatternRule] {
-        guard let url = Bundle.module.url(forResource: "patterns", withExtension: "json"),
-              let data = try? Data(contentsOf: url) else {
+        guard let data = DLPResources.data(named: "patterns", withExtension: "json"),
+              let pack = try? JSONDecoder().decode(Pack.self, from: data),
+              !pack.patterns.isEmpty else {
             return coreFallback
         }
-        do {
-            let pack = try JSONDecoder().decode(Pack.self, from: data)
-            return pack.patterns.isEmpty ? coreFallback : pack.patterns
-        } catch {
-            return coreFallback
-        }
+        return pack.patterns
     }
 
     /// Decode an external pattern pack (e.g. an MDM-delivered custom rule set).

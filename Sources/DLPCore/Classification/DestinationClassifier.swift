@@ -28,8 +28,7 @@ public struct AIServiceCatalog: Sendable {
 
     /// The built-in catalog shipped as a resource (falls back to a tiny core set).
     public static let builtin: AIServiceCatalog = {
-        guard let url = Bundle.module.url(forResource: "ai-services", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
+        guard let data = DLPResources.data(named: "ai-services", withExtension: "json"),
               let pack = try? JSONDecoder().decode(Pack.self, from: data),
               !pack.services.isEmpty else {
             return AIServiceCatalog(entries: coreFallback)

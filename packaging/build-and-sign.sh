@@ -30,8 +30,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Library/
 cp "$BUILD_DIR/SentinelAgent" "$APP/Contents/MacOS/Sentinel"
 cp "$BUILD_DIR/dlpctl" "$APP/Contents/MacOS/dlpctl"
 cp "$ROOT/packaging/Info/SentinelAgent-Info.plist" "$APP/Contents/Info.plist"
-# Bundle the SwiftPM resource bundles (patterns.json, ai-services.json).
-cp -R "$BUILD_DIR"/*.bundle "$APP/Contents/Resources/" 2>/dev/null || true
+# Bundle the SwiftPM resource bundle (patterns.json, ai-services.json) into
+# Contents/Resources. DLPCore's DLPResources loader searches Bundle.main.resourceURL
+# (= Contents/Resources) for SentinelDLP_DLPCore.bundle, so this is where it must go.
+cp -R "$BUILD_DIR"/SentinelDLP_DLPCore.bundle "$APP/Contents/Resources/" 2>/dev/null || true
 
 # Pull pre-built system extensions from a STAGING dir (the app bundle is wiped on
 # every run, so they can't live inside it between runs). Build the
