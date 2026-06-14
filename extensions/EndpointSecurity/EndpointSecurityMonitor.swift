@@ -111,14 +111,30 @@ public final class EndpointSecurityMonitor {
         guard Self.isUploaderProcess(openerPath) else { return true }
         guard filePath.count < 4096 else { return true }
 
-        // Stat the size BEFORE loading bytes. This runs inside an AUTH_OPEN
-        // handler with a hard deadline, so reading a multi-GB file into memory
-        // would exhaust memory or blow the deadline. Files over the cap are passed
-        // (a documented residual at the ES enforcement point).
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: filePath),
-              let size = attrs[.size] as? Int, size > 0, size < Self.maxScanBytes else { return true }
-        guard let data = FileManager.default.contents(atPath: filePath),
-              let text = String(data: data, encoding: .utf8) else { return true }
+        // Open with O_NOFOLLOW and fstat the FD before reading — never via
+        // attributesOfItem + contents(atPath:), which lets a tiny symlink pass the
+        // size guard while contents() follows it and loads a multi-GB target into
+        // memory inside the AUTH deadline. We only scan REGULAR files under the cap
+        // and read from the same FD we stat'd (no path-based TOCTOU).
+        let fd = open(filePath, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { return true }   // symlink (ELOOP) / unopenable → don't read
+        defer { close(fd) }
+
+        var st = stat()
+        guard fstat(fd, &st) == 0,
+              (st.st_mode & S_IFMT) == S_IFREG,                 // regular file only
+              st.st_size > 0, st.st_size < off_t(Self.maxScanBytes) else { return true }
+
+        var data = Data()
+        data.reserveCapacity(Int(st.st_size))
+        var chunk = [UInt8](repeating: 0, count: 65_536)
+        while data.count < Int(st.st_size) {
+            let want = min(chunk.count, Int(st.st_size) - data.count)
+            let n = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, want) }
+            if n <= 0 { break }
+            data.append(contentsOf: chunk[0..<n])
+        }
+        guard let text = String(data: data, encoding: .utf8) else { return true }
 
         // ES can neither show a justification prompt nor rewrite the file before
         // the uploader reads it, so it FAILS SAFE: any verdict that isn't
