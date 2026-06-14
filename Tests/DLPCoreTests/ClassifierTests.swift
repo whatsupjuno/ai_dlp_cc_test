@@ -59,4 +59,28 @@ final class ClassifierTests: XCTestCase {
         let d = classifier.classify(host: "notchatgpt.com")
         XCTAssertNil(d.service)
     }
+
+    func testNoDuplicateDomainAcrossServices() {
+        // A domain mapped to two services makes one service/tier unreachable
+        // (classify returns the first suffix match).
+        var owner: [String: String] = [:]
+        for e in AIServiceCatalog.builtin.entries {
+            // A domain may legitimately appear in both this entry's web and API
+            // lists; collapse to a set so we only catch cross-*service* clashes.
+            for key in Set((e.webDomains + e.apiHosts).map { $0.lowercased() }) {
+                if let other = owner[key], other != e.id {
+                    XCTFail("domain '\(key)' appears in both '\(other)' and '\(e.id)'")
+                }
+                owner[key] = e.id
+            }
+        }
+    }
+
+    func testAnthropicConsoleResolvesToAPIService() {
+        // console.anthropic.com is platform/API traffic → monitored, not the
+        // consumer Claude tier.
+        let d = classifier.classify(host: "console.anthropic.com")
+        XCTAssertEqual(d.service?.id, "anthropic-api")
+        XCTAssertEqual(d.tier, .monitored)
+    }
 }

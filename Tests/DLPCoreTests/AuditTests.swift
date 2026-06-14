@@ -44,6 +44,22 @@ final class AuditTests: XCTestCase {
         }
     }
 
+    func testDeinitDrainsPendingWrites() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("dlp-deinit-\(UUID().uuidString).jsonl")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // Record then let the sink deinit WITHOUT an explicit flush().
+        try autoreleasepool {
+            let sink = try JSONLFileAuditSink(url: url)
+            for _ in 0..<8 { sink.record(AuditEvent(verdict: sampleVerdict())) }
+        }
+
+        let content = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertEqual(content.split(separator: "\n").count, 8,
+                       "deinit must drain queued async writes before closing")
+    }
+
     func testCEFFormatting() {
         let event = AuditEvent(verdict: sampleVerdict())
         let cef = CEFFormatter.format(event)

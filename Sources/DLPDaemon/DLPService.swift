@@ -95,7 +95,22 @@ public final class DLPService: @unchecked Sendable {
             }
             monitors.append(fm)
         }
-        for m in monitors { try m.start() }
+
+        // Start monitors with rollback: if a later monitor fails to start, stop
+        // the ones already running so we don't leave (e.g.) clipboard enforcement
+        // active in the background while the caller sees a startup failure.
+        var started: [Monitor] = []
+        do {
+            for m in monitors {
+                try m.start()
+                started.append(m)
+            }
+        } catch {
+            for m in started.reversed() { m.stop() }
+            monitors.removeAll()
+            clipboardMonitor = nil
+            throw error
+        }
     }
 
     public func stop() {

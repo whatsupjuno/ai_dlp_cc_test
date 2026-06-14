@@ -41,7 +41,14 @@ public final class JSONLFileAuditSink: AuditSink, @unchecked Sendable {
         self.handle.seekToEndOfFile()
     }
 
-    deinit { try? handle.close() }
+    deinit {
+        // Drain queued writes before closing — a teardown right after a verdict
+        // (e.g. block-a-paste then quit) must not drop or write past a closed
+        // handle. The serial queue guarantees prior async writes have completed.
+        queue.sync {}
+        try? handle.synchronize()
+        try? handle.close()
+    }
 
     public func record(_ event: AuditEvent) {
         queue.async { [handle] in

@@ -46,7 +46,6 @@
       "webDomains": [
         "claude.ai",
         "anthropic.com",
-        "console.anthropic.com",
         "downloads.claude.ai",
         "storage.googleapis.com"
       ],
