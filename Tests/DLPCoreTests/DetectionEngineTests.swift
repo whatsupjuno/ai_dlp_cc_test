@@ -30,6 +30,13 @@ final class DetectionEngineTests: XCTestCase {
         XCTAssertTrue(f.contains { $0.category == .financial }, "spaced PAN should be detected")
     }
 
+    func testSeparatorTolerantIBAN() {
+        // Grouped, human-readable IBAN must be detected (regex tolerates the
+        // spaces; the mod-97 validator compacts them).
+        let f = makeEngine().scan("please wire to GB82 WEST 1234 5698 7654 32 by EOD", context: ctx())
+        XCTAssertTrue(f.contains { $0.type.id == "iban" }, "grouped IBAN should be detected")
+    }
+
     func testLuhnSuppressesRandom16Digits() {
         // A 16-digit number that fails Luhn should not be reported as a card.
         // (1234567812345678 is Luhn-invalid; verified in ValidatorsTests.)

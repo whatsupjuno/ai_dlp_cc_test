@@ -63,6 +63,11 @@ public final class NetworkFilterController: NSObject {
             let config = NEFilterProviderConfiguration()
             config.filterPackets = false
             config.filterSockets = true
+            // Without this, macOS has no provider bundle to attach to the enabled
+            // filter and outbound flows never reach FilterDataProvider on the
+            // in-app activation path (the MDM profile sets the equivalent
+            // FilterDataProviderBundleIdentifier key).
+            config.filterDataProviderBundleIdentifier = self.extensionIdentifier
             manager.providerConfiguration = config
             manager.localizedDescription = self.localizedDescription
             manager.isEnabled = true

@@ -44,11 +44,25 @@ cat <<EOF
 EOF
 
 echo "▸ Signing…"
-# Sign embedded extensions first (if present), then the app, deep + hardened runtime.
+# Sign embedded extensions first (if present), then the app, deep + hardened
+# runtime. Each extension MUST get its own entitlements file — signing the
+# Endpoint Security extension with the network-filter entitlements would strip
+# `com.apple.developer.endpoint-security.client` and it would fail at runtime.
 find "$APP/Contents/Library/SystemExtensions" -maxdepth 1 -type d 2>/dev/null | while read -r ext; do
   [ "$ext" = "$APP/Contents/Library/SystemExtensions" ] && continue
+  base="$(basename "$ext" | tr '[:upper:]' '[:lower:]')"
+  case "$base" in
+    *endpointsecurity*|*endpoint-security*)
+      ent="$ROOT/packaging/entitlements/SentinelEndpointSecurity.entitlements" ;;
+    *networkfilter*|*network-filter*)
+      ent="$ROOT/packaging/entitlements/SentinelNetworkFilter.entitlements" ;;
+    *)
+      echo "  ⚠︎ unknown extension '$base' — defaulting to network-filter entitlements; verify manually"
+      ent="$ROOT/packaging/entitlements/SentinelNetworkFilter.entitlements" ;;
+  esac
+  echo "  signing $(basename "$ext") with $(basename "$ent")"
   codesign --force --options runtime --timestamp \
-    --entitlements "$ROOT/packaging/entitlements/SentinelNetworkFilter.entitlements" \
+    --entitlements "$ent" \
     --sign "$SIGN_ID" "$ext"
 done
 
