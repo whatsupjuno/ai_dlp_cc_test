@@ -33,7 +33,20 @@ cp "$ROOT/packaging/Info/SentinelAgent-Info.plist" "$APP/Contents/Info.plist"
 # Bundle the SwiftPM resource bundle (patterns.json, ai-services.json) into
 # Contents/Resources. DLPCore's DLPResources loader searches Bundle.main.resourceURL
 # (= Contents/Resources) for SentinelDLP_DLPCore.bundle, so this is where it must go.
-cp -R "$BUILD_DIR"/SentinelDLP_DLPCore.bundle "$APP/Contents/Resources/" 2>/dev/null || true
+# Fail LOUDLY if it's missing: DLPResources degrades to a tiny fallback catalog, so
+# a release shipped without the full 61-pattern/20-service pack would silently have
+# broad detection gaps rather than crash.
+RES_BUNDLE="$BUILD_DIR/SentinelDLP_DLPCore.bundle"
+if [ ! -f "$RES_BUNDLE/patterns.json" ] || [ ! -f "$RES_BUNDLE/ai-services.json" ]; then
+  echo "✗ Resource bundle missing or incomplete: $RES_BUNDLE"
+  echo "  Run 'swift build -c release' first so patterns.json / ai-services.json exist."
+  exit 1
+fi
+cp -R "$RES_BUNDLE" "$APP/Contents/Resources/"
+if [ ! -f "$APP/Contents/Resources/SentinelDLP_DLPCore.bundle/patterns.json" ]; then
+  echo "✗ Resource bundle did not copy into the app — aborting."
+  exit 1
+fi
 
 # Pull pre-built system extensions from a STAGING dir (the app bundle is wiped on
 # every run, so they can't live inside it between runs). Build the
