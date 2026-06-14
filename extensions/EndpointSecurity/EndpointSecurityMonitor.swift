@@ -72,10 +72,12 @@ public final class EndpointSecurityMonitor {
             _ = path
 
         case ES_EVENT_TYPE_AUTH_OPEN:
-            // Authorize file opens; deny reads of files we classify as sensitive
-            // when the opener is an unsanctioned uploader. Must always respond.
-            let path = Self.string(message.pointee.event.open.file.pointee.path)
-            let allow = shouldAllowOpen(path: path)
+            // Authorize file opens; deny reads of sensitive files ONLY when the
+            // opener is an unsanctioned uploader (browser / AI client). Must
+            // always respond.
+            let filePath = Self.string(message.pointee.event.open.file.pointee.path)
+            let openerPath = Self.string(message.pointee.process.pointee.executable.pointee.path)
+            let allow = shouldAllowOpen(filePath: filePath, openerPath: openerPath)
             if let client {
                 es_respond_auth_result(client, message,
                                        allow ? ES_AUTH_RESULT_ALLOW : ES_AUTH_RESULT_DENY,
@@ -87,16 +89,33 @@ public final class EndpointSecurityMonitor {
         }
     }
 
-    private func shouldAllowOpen(path: String) -> Bool {
-        // Example policy hook: scan small text files on open and deny if they
-        // contain critical secrets being opened by a browser/uploader. Real
-        // deployments cache verdicts and respect the AUTH deadline strictly.
-        guard path.count < 4096,
-              let data = FileManager.default.contents(atPath: path),
+    /// Executable-path fragments of data-egress apps whose reads of sensitive
+    /// files we gate. A developer opening a `.env` / private key / SSN fixture in
+    /// an editor, IDE, or terminal is NEVER denied — only an uploader is.
+    private static let uploaderProcesses: [String] = [
+        "Google Chrome", "Chromium", "Microsoft Edge", "Brave Browser", "Arc",
+        "Firefox", "Safari", "Opera", "Vivaldi",
+        "ChatGPT", "Claude", "Perplexity", "Poe",
+    ]
+
+    private static func isUploaderProcess(_ executablePath: String) -> Bool {
+        uploaderProcesses.contains { executablePath.contains($0) }
+    }
+
+    private func shouldAllowOpen(filePath: String, openerPath: String) -> Bool {
+        // Gate ONLY known uploaders (browsers / AI clients). Editors, IDEs and
+        // terminals reading the same sensitive file are always allowed — denying
+        // them would break normal local development system-wide.
+        guard Self.isUploaderProcess(openerPath) else { return true }
+
+        // Scan small text files; deny if the uploader is reading critical secrets.
+        // Real deployments cache verdicts and respect the AUTH deadline strictly.
+        guard filePath.count < 4096,
+              let data = FileManager.default.contents(atPath: filePath),
               data.count < 1_000_000,
               let text = String(data: data, encoding: .utf8) else { return true }
         let verdict = engine.inspect(text, channel: .file, host: nil)
-        if verdict.blocksEgress { onVerdict(verdict, path); return false }
+        if verdict.blocksEgress { onVerdict(verdict, filePath); return false }
         return true
     }
 
