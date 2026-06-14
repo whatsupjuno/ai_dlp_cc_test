@@ -55,6 +55,19 @@ public extension Policy {
                     action: .block,
                     message: "Sending large volumes of personal data to AI tools is prohibited."
                 ),
+                // 4b. Bulk identity exfiltration — NER emits `.identity` (not
+                // `.pii`) for names/orgs/locations, so a pasted customer list of
+                // names needs its own threshold. Higher count than PII because
+                // NER entities are noisier/lower-confidence.
+                PolicyRule(
+                    id: "block-bulk-identity",
+                    name: "Block bulk identity exfiltration",
+                    conditions: RuleConditions(
+                        categoryThresholds: [CategoryThreshold(category: .identity, count: 25)]
+                    ),
+                    action: .block,
+                    message: "Sending a large list of names/organizations to AI tools is prohibited."
+                ),
                 // 5. Payment-card data → warn + require justification.
                 PolicyRule(
                     id: "warn-financial",

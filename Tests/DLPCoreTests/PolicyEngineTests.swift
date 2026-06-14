@@ -58,6 +58,20 @@ final class PolicyEngineTests: XCTestCase {
         XCTAssertEqual(d.matchedRuleID, "block-bulk-pii")
     }
 
+    func testBulkIdentityBlocks() {
+        // A pasted customer list of names is NER-detected as `.identity`, not
+        // `.pii`, and must still be blocked at the bulk threshold.
+        let many = (0..<25).map { finding("ner-person-\($0)", .identity, .info, .medium) }
+        let d = engine.evaluate(findings: many, context: ctx())
+        XCTAssertEqual(d.action, .block)
+        XCTAssertEqual(d.matchedRuleID, "block-bulk-identity")
+    }
+
+    func testFewIdentitiesNotBulkBlocked() {
+        let few = (0..<5).map { finding("ner-person-\($0)", .identity, .info, .medium) }
+        XCTAssertNotEqual(engine.evaluate(findings: few, context: ctx()).matchedRuleID, "block-bulk-identity")
+    }
+
     func testAuditsUnsanctionedWithoutFindings() {
         let d = engine.evaluate(findings: [], context: ctx(tier: .unsanctioned, serviceID: "perplexity"))
         XCTAssertEqual(d.action, .audit)

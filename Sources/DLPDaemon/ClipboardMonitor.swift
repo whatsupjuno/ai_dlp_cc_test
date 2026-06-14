@@ -19,6 +19,8 @@ public final class ClipboardMonitor: Monitor, @unchecked Sendable {
     private let interval: TimeInterval
     private let handler: @Sendable (MonitoredPayload) -> Void
     private let queue = DispatchQueue(label: "dlp.monitor.clipboard")
+    /// Marks `queue` so we can detect re-entrant calls (enforce runs on it).
+    private static let queueKey = DispatchSpecificKey<UInt8>()
 
     private var timer: DispatchSourceTimer?
     private var lastChangeCount: Int
@@ -34,6 +36,7 @@ public final class ClipboardMonitor: Monitor, @unchecked Sendable {
         // Seed with the current count so we don't fire on whatever is already
         // on the clipboard at launch.
         self.lastChangeCount = pasteboard.changeCount
+        queue.setSpecific(key: Self.queueKey, value: 1)
     }
 
     public func start() throws {
@@ -66,6 +69,18 @@ public final class ClipboardMonitor: Monitor, @unchecked Sendable {
     /// so callers can bind a later "restore" to exactly this clipboard state.
     @discardableResult
     public func replaceClipboard(with newValue: String) -> Int {
+        // Serialize with poll() on the monitor queue so `lastChangeCount` and the
+        // clear/set/read sequence can't be raced by the timer. The enforce path
+        // already runs on the queue (called from the poll handler), so run inline
+        // there to avoid a sync-onto-self deadlock; the app's confirm path comes
+        // from the main thread and is dispatched onto the queue.
+        if DispatchQueue.getSpecific(key: Self.queueKey) == 1 {
+            return performReplace(with: newValue)
+        }
+        return queue.sync { performReplace(with: newValue) }
+    }
+
+    private func performReplace(with newValue: String) -> Int {
         pasteboard.clearContents()
         pasteboard.setString(newValue, forType: .string)
         lastChangeCount = pasteboard.changeCount
