@@ -22,12 +22,34 @@ public final class FilterDataProvider: NEFilterDataProvider {
     /// The shared DLP brain. Built from the bundled pattern/service packs; an
     /// MDM push can replace the policy via `applySettings`.
     private let classifier = DestinationClassifier()
-    private let engine = DLPEngine(configuration: DLPConfiguration(maxInspectLength: 64 * 1024))
+    private let engine = FilterDataProvider.makeEngine()
 
-    /// Per-flow outbound accumulation for best-effort plaintext inspection.
-    private let accumLock = NSLock()
-    private var accumulators: [String: Data] = [:]
     private let maxAccumulate = 64 * 1024
+
+    /// Per-flow outbound state. We HOLD bytes (pass 0) while peeking so a secret
+    /// split across `handleOutboundData` callbacks is never partially released
+    /// before the combined buffer is recognized. `seen` tracks the highest
+    /// absolute offset accumulated, so a cumulative/re-delivered window isn't
+    /// double-counted regardless of how the OS chunks the stream.
+    private struct FlowState { var buffer = Data(); var seen = 0 }
+    private let stateLock = NSLock()
+    private var flows: [String: FlowState] = [:]
+
+    /// Build the engine WITH an audit sink so network-side verdicts reach the
+    /// audit trail. The sink writes into the shared App Group container that the
+    /// containing app / SIEM forwarder reads; if it is unavailable (unit tests,
+    /// missing entitlement) we degrade to no sink rather than failing.
+    static func makeEngine() -> DLPEngine {
+        DLPEngine(configuration: DLPConfiguration(maxInspectLength: 64 * 1024),
+                  auditSink: makeAuditSink())
+    }
+
+    static func makeAuditSink() -> AuditSink? {
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: "group.com.sentinel.dlp") else { return nil }
+        let url = container.appendingPathComponent("Logs/network-audit.jsonl")
+        return try? JSONLFileAuditSink(url: url)
+    }
 
     // MARK: - Lifecycle
 
@@ -38,7 +60,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
     }
 
     public override func stopFilter(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
-        accumLock.lock(); accumulators.removeAll(); accumLock.unlock()
+        stateLock.lock(); flows.removeAll(); stateLock.unlock()
         completionHandler()
     }
 
@@ -75,12 +97,10 @@ public final class FilterDataProvider: NEFilterDataProvider {
         readBytes: Data
     ) -> NEFilterDataVerdict {
         let key = Self.key(for: flow)
-        let buffer = append(readBytes, for: key)
+        let buffer = accumulate(readBytes, offset: offset, for: key)
         let host = Self.hostname(for: flow)
 
-        let decision = Self.decideOutbound(
-            buffer: buffer, chunkBytes: readBytes.count, offset: offset, maxAccumulate: maxAccumulate
-        ) { text in
+        let decision = Self.decideOutbound(buffer: buffer, maxAccumulate: maxAccumulate) { text in
             // "Sensitive" = anything a content filter can't apply in-place
             // (redact/warn) or that must be stopped (block/quarantine).
             let verdict = self.engine.inspect(text, channel: .network, host: host, sourceApp: nil)
@@ -89,42 +109,40 @@ public final class FilterDataProvider: NEFilterDataProvider {
 
         switch decision {
         case .allow:
+            // Release everything buffered + the rest of the flow, stop inspecting.
             clear(key)
             return .allow()
         case .drop:
             // Fail safe: a content filter cannot rewrite bytes or prompt the
-            // user, so a redact/warn/block verdict must drop the flow.
+            // user, so a redact/warn/block verdict drops the (still-held) flow.
             clear(key)
             return .drop()
-        case let .keepPeeking(passBytes, peekBytes):
-            // Pass the inspected bytes but keep receiving more — the sensitive
-            // content may appear in a later chunk after a clean prefix.
-            return NEFilterDataVerdict(passBytes: passBytes, peekBytes: peekBytes)
+        case let .hold(peekBytes):
+            // Pass NOTHING yet (passBytes: 0) so a secret spanning the next
+            // callback boundary can still be dropped; ask to see more.
+            return NEFilterDataVerdict(passBytes: 0, peekBytes: peekBytes)
         }
     }
 
-    /// Pure, testable decision for an outbound chunk. Decoupled from the
-    /// NetworkExtension types so the peek/drop/allow logic can be unit-tested.
+    /// Pure, testable decision over the cumulative outbound buffer. Decoupled
+    /// from NetworkExtension types so the hold/drop/allow logic is unit-tested.
     enum OutboundDecision: Equatable {
-        case allow
-        case drop
-        case keepPeeking(passBytes: Int, peekBytes: Int)
+        case allow                  // release held + subsequent bytes, stop
+        case drop                   // drop the held flow
+        case hold(peekBytes: Int)   // pass 0, request to see up to peekBytes total
     }
 
     static func decideOutbound(
-        buffer: Data, chunkBytes: Int, offset: Int, maxAccumulate: Int,
-        isSensitive: (String) -> Bool
+        buffer: Data, maxAccumulate: Int, isSensitive: (String) -> Bool
     ) -> OutboundDecision {
-        if let text = String(data: buffer, encoding: .utf8), looksLikeText(text) {
-            if isSensitive(text) { return .drop }
-            if buffer.count >= maxAccumulate { return .allow }   // cap reached, stop inspecting
-            return .keepPeeking(passBytes: chunkBytes, peekBytes: maxAccumulate - buffer.count)
-        }
-        // Undecodable buffer.
-        if offset == 0 { return .allow }                          // first chunk not UTF-8 ⇒ TLS ciphertext
-        if buffer.count >= maxAccumulate { return .allow }
-        // Possibly a multibyte sequence split across chunks — keep peeking.
-        return .keepPeeking(passBytes: chunkBytes, peekBytes: maxAccumulate - buffer.count)
+        guard !buffer.isEmpty else { return .hold(peekBytes: maxAccumulate) }
+        // Lossy decode so a multibyte char split at the buffer end becomes U+FFFD
+        // rather than failing the whole decode; TLS/binary still reads as noise.
+        let text = String(decoding: buffer, as: UTF8.self)
+        guard Self.looksLikeText(text) else { return .allow }   // ciphertext/binary — don't stall
+        if isSensitive(text) { return .drop }
+        if buffer.count >= maxAccumulate { return .allow }       // inspected up to the cap; release
+        return .hold(peekBytes: maxAccumulate)                   // keep buffering for split secrets
     }
 
     public override func handleOutboundDataComplete(for flow: NEFilterFlow) -> NEFilterDataVerdict {
@@ -134,18 +152,25 @@ public final class FilterDataProvider: NEFilterDataProvider {
 
     // MARK: - Accumulation helpers
 
-    private func append(_ data: Data, for key: String) -> Data {
-        accumLock.lock(); defer { accumLock.unlock() }
-        var current = accumulators[key] ?? Data()
-        if current.count < maxAccumulate {
-            current.append(data.prefix(maxAccumulate - current.count))
-            accumulators[key] = current
+    /// Append the genuinely-new portion of `data` to the flow buffer (bounded by
+    /// `maxAccumulate`), de-duplicating any bytes at/below `seen` so both
+    /// "new-window" and "cumulative re-delivery" chunking styles are handled.
+    private func accumulate(_ data: Data, offset: Int, for key: String) -> Data {
+        stateLock.lock(); defer { stateLock.unlock() }
+        var st = flows[key] ?? FlowState()
+        let skip = max(0, st.seen - offset)
+        if skip < data.count {
+            let fresh = data.dropFirst(skip)
+            let room = maxAccumulate - st.buffer.count
+            if room > 0 { st.buffer.append(fresh.prefix(room)) }
+            st.seen = max(st.seen, offset + data.count)
+            flows[key] = st
         }
-        return current
+        return st.buffer
     }
 
     private func clear(_ key: String) {
-        accumLock.lock(); accumulators[key] = nil; accumLock.unlock()
+        stateLock.lock(); flows[key] = nil; stateLock.unlock()
     }
 
     // MARK: - Flow introspection

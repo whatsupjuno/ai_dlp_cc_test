@@ -2,55 +2,56 @@ import XCTest
 import Foundation
 @testable import SentinelNetworkFilter
 
-/// Tests for the pure outbound-flow decision logic (peek / drop / allow) that
-/// drives the NEFilterDataProvider, without needing NetworkExtension flow objects.
+/// Tests for the pure outbound decision logic (hold / drop / allow) that drives
+/// the NEFilterDataProvider, without needing NetworkExtension flow objects.
 final class FilterDecisionTests: XCTestCase {
 
-    private let cap = 1024
+    private let cap = 4096
     private let never: (String) -> Bool = { _ in false }
     private let always: (String) -> Bool = { _ in true }
 
-    func testCiphertextFirstChunkAllows() {
-        // Non-UTF-8 bytes on the first chunk ⇒ TLS ciphertext ⇒ allow.
-        let bin = Data([0xFF, 0xFE, 0xFD, 0xFC, 0x80, 0x81])
-        let d = FilterDataProvider.decideOutbound(buffer: bin, chunkBytes: bin.count, offset: 0,
-                                                  maxAccumulate: cap, isSensitive: never)
-        XCTAssertEqual(d, .allow)
+    func testEmptyBufferHolds() {
+        XCTAssertEqual(FilterDataProvider.decideOutbound(buffer: Data(), maxAccumulate: cap, isSensitive: never),
+                       .hold(peekBytes: cap))
     }
 
-    func testCleanTextKeepsPeeking() {
-        let data = Data("hello world".utf8)
-        let d = FilterDataProvider.decideOutbound(buffer: data, chunkBytes: data.count, offset: 0,
-                                                  maxAccumulate: cap, isSensitive: never)
-        XCTAssertEqual(d, .keepPeeking(passBytes: data.count, peekBytes: cap - data.count))
+    func testCiphertextAllows() {
+        // A TLS-record-like byte sequence with many control bytes ⇒ not text ⇒ allow.
+        let bin = Data([0x16, 0x03, 0x03, 0x01, 0x00, 0x01, 0x00, 0xfc] + Array(repeating: UInt8(0xAB), count: 8))
+        XCTAssertEqual(FilterDataProvider.decideOutbound(buffer: bin, maxAccumulate: cap, isSensitive: never),
+                       .allow)
+    }
+
+    func testCleanTextHolds() {
+        // Clean plaintext under the cap must be HELD (pass 0), not released.
+        let data = Data("POST /v1/chat HTTP/1.1\r\nhost: api.example\r\n\r\nhello".utf8)
+        XCTAssertEqual(FilterDataProvider.decideOutbound(buffer: data, maxAccumulate: cap, isSensitive: never),
+                       .hold(peekBytes: cap))
     }
 
     func testSensitiveDrops() {
-        let data = Data("here is a secret".utf8)
-        let d = FilterDataProvider.decideOutbound(buffer: data, chunkBytes: data.count, offset: 0,
-                                                  maxAccumulate: cap, isSensitive: always)
-        XCTAssertEqual(d, .drop)
+        let data = Data("prompt with a secret".utf8)
+        XCTAssertEqual(FilterDataProvider.decideOutbound(buffer: data, maxAccumulate: cap, isSensitive: always),
+                       .drop)
     }
 
     func testCleanAtCapAllows() {
         let data = Data(repeating: 0x61, count: cap) // "a" * cap
-        let d = FilterDataProvider.decideOutbound(buffer: data, chunkBytes: data.count, offset: 0,
-                                                  maxAccumulate: cap, isSensitive: never)
-        XCTAssertEqual(d, .allow)
+        XCTAssertEqual(FilterDataProvider.decideOutbound(buffer: data, maxAccumulate: cap, isSensitive: never),
+                       .allow)
     }
 
-    func testSensitiveInLaterChunkAfterCleanPrefixIsCaught() {
-        // The exact bypass codex flagged: clean first chunk → keep peeking; the
-        // secret arrives in a later chunk → it is still inspected and dropped.
-        let prefix = Data("POST /v1/chat HTTP/1.1\r\nhost: x\r\n\r\n".utf8)
-        let first = FilterDataProvider.decideOutbound(buffer: prefix, chunkBytes: prefix.count,
-                                                      offset: 0, maxAccumulate: cap, isSensitive: never)
-        XCTAssertEqual(first, .keepPeeking(passBytes: prefix.count, peekBytes: cap - prefix.count))
+    func testSplitSecretNeverReleasesFirstFragment() {
+        // codex P1: a secret split across callbacks. The first (clean-looking)
+        // fragment must be HELD — decideOutbound returns .hold, and the provider
+        // maps that to passBytes:0, so nothing is released before the combined
+        // buffer is recognized and dropped.
+        let fragment1 = Data("here is sk-ant-api03-AAAA1111BBBB2222CCCC333".utf8) // missing tail
+        XCTAssertEqual(FilterDataProvider.decideOutbound(buffer: fragment1, maxAccumulate: cap, isSensitive: never),
+                       .hold(peekBytes: cap), "first fragment must be held, not passed")
 
-        let full = prefix + Data("prompt: SSN 123-45-6789".utf8)
-        let second = FilterDataProvider.decideOutbound(buffer: full, chunkBytes: 23,
-                                                       offset: prefix.count, maxAccumulate: cap,
-                                                       isSensitive: always)
-        XCTAssertEqual(second, .drop)
+        let combined = fragment1 + Data("3DDDD4444EEEE".utf8) // now a complete secret
+        XCTAssertEqual(FilterDataProvider.decideOutbound(buffer: combined, maxAccumulate: cap, isSensitive: always),
+                       .drop, "combined buffer is dropped — the first fragment was never released")
     }
 }
