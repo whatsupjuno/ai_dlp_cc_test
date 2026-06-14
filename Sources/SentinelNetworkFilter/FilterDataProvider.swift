@@ -19,10 +19,13 @@ import DLPCore
 /// (`content-filter-provider`) entitlement to run. See `packaging/`.
 public final class FilterDataProvider: NEFilterDataProvider {
 
-    /// The shared DLP brain. Built from the bundled pattern/service packs; an
-    /// MDM push can replace the policy via `applySettings`.
+    /// The shared DLP brain. NOTE: built WITHOUT an audit sink — the per-chunk
+    /// sensitivity checks in handleOutboundData must NOT emit an audit event per
+    /// callback. Audits are recorded explicitly: once per flow at the destination
+    /// tier (handleNewFlow) and once when a flow is actually dropped for content.
     private let classifier = DestinationClassifier()
-    private let engine = FilterDataProvider.makeEngine()
+    private let engine = DLPEngine(configuration: DLPConfiguration(maxInspectLength: 64 * 1024))
+    private let auditSink: AuditSink? = FilterDataProvider.makeAuditSink()
 
     private let maxAccumulate = 64 * 1024
     /// Forward look-ahead requested per callback while a plaintext body is still
@@ -38,20 +41,21 @@ public final class FilterDataProvider: NEFilterDataProvider {
     private let stateLock = NSLock()
     private var flows: [String: FlowState] = [:]
 
-    /// Build the engine WITH an audit sink so network-side verdicts reach the
-    /// audit trail. The sink writes into the shared App Group container that the
+    /// The audit sink writes into the shared App Group container that the
     /// containing app / SIEM forwarder reads; if it is unavailable (unit tests,
     /// missing entitlement) we degrade to no sink rather than failing.
-    static func makeEngine() -> DLPEngine {
-        DLPEngine(configuration: DLPConfiguration(maxInspectLength: 64 * 1024),
-                  auditSink: makeAuditSink())
-    }
-
     static func makeAuditSink() -> AuditSink? {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: "group.com.sentinel.dlp") else { return nil }
         let url = container.appendingPathComponent("Logs/network-audit.jsonl")
         return try? JSONLFileAuditSink(url: url)
+    }
+
+    /// Record ONE destination-tier audit event for a flow (the engine has no
+    /// sink, so `inspect` doesn't auto-record — we do it explicitly).
+    private func recordTierAudit(host: String) {
+        guard let auditSink else { return }
+        auditSink.record(AuditEvent(verdict: engine.inspect("", channel: .network, host: host, sourceApp: nil)))
     }
 
     // MARK: - Lifecycle
@@ -78,7 +82,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
             // Record the denied egress to a forbidden AI service BEFORE dropping —
             // this is the highest-risk policy path and must be visible in
             // audit/SIEM (block-forbidden-destination fires on the empty body).
-            engine.inspect("", channel: .network, host: host, sourceApp: nil)
+            recordTierAudit(host: host)
             return .drop()
 
         case .sanctioned, .unknown:
@@ -86,11 +90,11 @@ public final class FilterDataProvider: NEFilterDataProvider {
             return .allow()
 
         case .monitored, .unsanctioned:
-            // Record the destination-tier egress now, at flow creation. The body
-            // is almost always TLS ciphertext we can never inspect, so without
+            // Record the destination-tier egress ONCE now, at flow creation. The
+            // body is almost always TLS ciphertext we can never inspect, so without
             // this the audit-unsanctioned / monitored policy would never fire and
             // network-audit.jsonl would stay empty for normal ChatGPT/Claude use.
-            engine.inspect("", channel: .network, host: host, sourceApp: nil)
+            recordTierAudit(host: host)
             // Then request outbound bytes so we can also inspect any plaintext.
             return .filterDataVerdict(
                 withFilterInbound: false,
@@ -110,13 +114,19 @@ public final class FilterDataProvider: NEFilterDataProvider {
         let buffer = accumulate(readBytes, offset: offset, for: key)
         let host = Self.hostname(for: flow)
 
+        // Capture the sensitive verdict (if any) so we audit ONCE on drop, rather
+        // than per clean chunk — the engine has no sink, so inspect() here does
+        // not record anything by itself.
+        var sensitiveVerdict: DLPVerdict?
         let decision = Self.decideOutbound(
             buffer: buffer, windowCount: readBytes.count, peekChunk: peekChunk, maxAccumulate: maxAccumulate
         ) { text in
             // "Sensitive" = anything a content filter can't apply in-place
             // (redact/warn) or that must be stopped (block/quarantine).
             let verdict = self.engine.inspect(text, channel: .network, host: host, sourceApp: nil)
-            return verdict.action != .allow && verdict.action != .audit
+            let sensitive = verdict.action != .allow && verdict.action != .audit
+            if sensitive { sensitiveVerdict = verdict }
+            return sensitive
         }
 
         switch decision {
@@ -126,7 +136,8 @@ public final class FilterDataProvider: NEFilterDataProvider {
             return .allow()
         case .drop:
             // Fail safe: a content filter cannot rewrite bytes or prompt the user,
-            // so any non-allow/audit verdict drops the flow.
+            // so any non-allow/audit verdict drops the flow. Audit the block ONCE.
+            if let verdict = sensitiveVerdict { auditSink?.record(AuditEvent(verdict: verdict)) }
             clear(key)
             return .drop()
         case let .passWindow(passBytes, peekBytes):

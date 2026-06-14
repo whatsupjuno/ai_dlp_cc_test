@@ -144,10 +144,29 @@ public final class FileSystemMonitor: Monitor, @unchecked Sendable {
 
     private func scanSettledFile(_ path: String) {
         pendingScans.removeValue(forKey: path)
-        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-              let size = attrs[.size] as? Int, size > 0, size <= maxFileSize else { return }
-        guard let data = FileManager.default.contents(atPath: path),
-              let text = String(data: data, encoding: .utf8), !text.isEmpty else { return }
+        // Open + fstat + bounded read from the SAME fd. attributesOfItem(atPath:)
+        // then contents(atPath:) is a TOCTOU: a watched file (e.g. in Downloads)
+        // can be tiny at stat then atomically swapped or grown to a multi-GB
+        // target before the read, defeating maxFileSize. O_NOFOLLOW also blocks a
+        // symlink pointing at a huge file.
+        let fd = open(path, O_RDONLY | O_NOFOLLOW)
+        guard fd >= 0 else { return }
+        defer { close(fd) }
+        var st = stat()
+        guard fstat(fd, &st) == 0,
+              (st.st_mode & S_IFMT) == S_IFREG,
+              st.st_size > 0, st.st_size <= off_t(maxFileSize) else { return }
+
+        var data = Data()
+        data.reserveCapacity(Int(st.st_size))
+        var chunk = [UInt8](repeating: 0, count: 65_536)
+        while data.count < Int(st.st_size) {
+            let want = min(chunk.count, Int(st.st_size) - data.count)
+            let n = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, want) }
+            if n <= 0 { break }
+            data.append(contentsOf: chunk[0..<n])
+        }
+        guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return }
         handler(MonitoredPayload(text: text, channel: .file, sourceApp: nil, origin: path))
     }
 }
