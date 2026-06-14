@@ -43,6 +43,19 @@ final class PatternLibraryTests: XCTestCase {
         XCTAssertEqual(rules.first?.id, "acme-employee-id")
     }
 
+    func testMatchCapCountsRawMatchesNotJustFindings() {
+        // Cap of 3 raw matches. The first 4 candidates are Luhn-invalid (drop),
+        // the 5th is Luhn-valid. The cap must stop after 3 raw matches — before
+        // the valid 5th — so a payload of invalid candidates can't force unbounded
+        // validation work (DoS bound).
+        let rule = PatternRule(id: "pan16", name: "PAN", category: .financial, severity: .high,
+                               regex: #"\b[0-9]{16}\b"#, validator: .luhn, confidence: .high)
+        let detector = RegexDetector(rules: [rule], maxMatchesPerRule: 3)
+        let text = "1111111111111111 2222222222222222 3333333333333333 4444444444444444 4111111111111111"
+        let f = detector.scan(text, context: InspectionContext(channel: .manualScan))
+        XCTAssertTrue(f.isEmpty, "cap must bound raw matches; the valid 5th is never reached")
+    }
+
     func testMalformedRuleIsQuarantinedNotCrashing() {
         // A rule with an invalid regex must be skipped, not crash the detector.
         let bad = PatternRule(id: "bad", name: "Bad", category: .pii, severity: .low,

@@ -90,6 +90,13 @@ final class DetectionEngineTests: XCTestCase {
         XCTAssertTrue(rrn?.note?.contains("checksum-unverified") ?? false)
     }
 
+    func testImpossibleRRNDateDropped() {
+        // Matches the regex (day 31 ≤ 31) but Feb 31 isn't a real date → must be
+        // dropped, NOT kept as a medium-confidence critical finding (false block).
+        let f = makeEngine(boost: false).scan("990231-1234567", context: ctx())
+        XCTAssertFalse(f.contains { $0.type.id == "kr-rrn" })
+    }
+
     func testChecksumValidRRNKeepsHighConfidence() {
         let f = makeEngine(boost: false).scan("900101-1234568", context: ctx())
         XCTAssertEqual(f.first { $0.type.id == "kr-rrn" }?.confidence, .high)

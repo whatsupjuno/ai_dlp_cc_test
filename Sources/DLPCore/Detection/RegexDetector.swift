@@ -64,15 +64,24 @@ public final class RegexDetector: Detector, @unchecked Sendable {
                 guard range.location != NSNotFound, range.length > 0,
                       NSMaxRange(range) <= ns.length else { return }
 
+                // Count EVERY raw candidate match toward the cap (before any
+                // validator early-return), so a payload full of Luhn-invalid
+                // PAN-shaped numbers can't force unbounded validation work — the
+                // documented DoS bound must hold regardless of how many drop.
+                count += 1
+                if count >= self.maxMatchesPerRule { stop.pointee = true }
+
                 let value = ns.substring(with: range)
 
                 // Apply the validator. A hard failure (e.g. Luhn on a card) drops
                 // the match; a *soft* failure (KR RRN checksum on a post-2020
-                // randomized number) keeps it at one lower confidence level.
+                // randomized number) keeps it at one lower confidence level — but
+                // only if it's still plausible (a valid RRN calendar date).
                 var confidence = rule.confidence
                 var note: String? = rule.validator == .none ? nil : "validated:\(rule.validator.rawValue)"
                 if rule.validator != .none, !Validators.run(rule.validator, on: value) {
-                    guard rule.validator.failureIsSoft else { return } // hard fail → drop
+                    guard rule.validator.failureIsSoft,
+                          Validators.softFailStillPlausible(rule.validator, on: value) else { return }
                     confidence = rule.confidence.downgraded
                     note = "checksum-unverified:\(rule.validator.rawValue)"
                 }
@@ -87,9 +96,6 @@ public final class RegexDetector: Detector, @unchecked Sendable {
                     valueFingerprint: Masking.fingerprint(value),
                     note: note
                 ))
-
-                count += 1
-                if count >= self.maxMatchesPerRule { stop.pointee = true }
             }
         }
         return findings

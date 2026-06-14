@@ -81,6 +81,9 @@ final class ClassifierTests: XCTestCase {
         XCTAssertNil(classifier.classify(host: "storage.googleapis.com").service)
         XCTAssertNil(classifier.classify(host: "github.com").service)
         XCTAssertNil(classifier.classify(host: "discord.com").service)
+        // Shared GitHub content CDN must not be classified as Copilot.
+        XCTAssertNil(classifier.classify(host: "raw.githubusercontent.com").service)
+        XCTAssertNil(classifier.classify(host: "avatars.githubusercontent.com").service)
     }
 
     func testAnthropicConsoleResolvesToAPIService() {

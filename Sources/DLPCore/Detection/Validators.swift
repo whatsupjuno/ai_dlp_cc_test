@@ -101,14 +101,38 @@ public enum Validators {
 
     // MARK: - Korean Resident Registration Number (주민등록번호)
 
-    /// Validate a Korean RRN (13 digits, possibly hyphenated `YYMMDD-SBBBBBC`).
-    /// Uses the legacy weighted checksum, which still applies to numbers issued
-    /// before the 2020 format change; numbers issued after are not checksum-
-    /// verifiable, so a `true` here is high-confidence and a `false` is treated
-    /// by callers as "still a candidate, lower confidence".
-    public static func krRRNChecksum(_ raw: String) -> Bool {
+    /// Validate that the embedded birth date of a Korean RRN is a real calendar
+    /// date. The century comes from the gender/century digit (1,2,5,6 → 1900s;
+    /// 3,4,7,8 → 2000s; 9,0 → 1800s). Rejects impossible dates like `990231`.
+    public static func krRRNDateValid(_ raw: String) -> Bool {
         let ds = digits(of: raw)
         guard ds.count == 13 else { return false }
+        let yy = ds[0] * 10 + ds[1]
+        let mm = ds[2] * 10 + ds[3]
+        let dd = ds[4] * 10 + ds[5]
+        guard (1...12).contains(mm) else { return false }
+        let century: Int
+        switch ds[6] {
+        case 1, 2, 5, 6: century = 1900
+        case 3, 4, 7, 8: century = 2000
+        case 9, 0: century = 1800
+        default: return false
+        }
+        let year = century + yy
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+        let daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        return (1...daysInMonth[mm - 1]).contains(dd)
+    }
+
+    /// Validate a Korean RRN (13 digits, possibly hyphenated `YYMMDD-SBBBBBC`).
+    /// Requires a valid calendar date AND the legacy weighted checksum. The
+    /// checksum still applies to numbers issued before the 2020 format change;
+    /// numbers issued after are not checksum-verifiable, so callers treat a
+    /// `false` (with a valid date) as "still a candidate, lower confidence" via
+    /// `krRRNDateValid`.
+    public static func krRRNChecksum(_ raw: String) -> Bool {
+        let ds = digits(of: raw)
+        guard ds.count == 13, krRRNDateValid(raw) else { return false }
         let weights = [2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5]
         var sum = 0
         for i in 0..<12 { sum += ds[i] * weights[i] }
@@ -153,6 +177,17 @@ public enum Validators {
         case .krRRNChecksum: return krRRNChecksum(value)
         case .abaRouting: return abaRouting(value)
         case .npiLuhn: return npiLuhn(value)
+        }
+    }
+
+    /// For a soft-failing validator, whether a checksum-failed match is still a
+    /// plausible instance (kept at lower confidence) rather than noise (dropped).
+    /// KR RRN: a checksum miss is only a candidate post-2020 RRN if its embedded
+    /// date is a real calendar date — so `990231-…` is rejected, not downgraded.
+    public static func softFailStillPlausible(_ kind: ValidatorKind, on value: String) -> Bool {
+        switch kind {
+        case .krRRNChecksum: return krRRNDateValid(value)
+        default: return true
         }
     }
 }

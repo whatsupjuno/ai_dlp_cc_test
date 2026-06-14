@@ -116,8 +116,7 @@
       "vendor": "GitHub / Microsoft",
       "defaultTier": "monitored",
       "webDomains": [
-        "githubcopilot.com",
-        "githubusercontent.com"
+        "githubcopilot.com"
       ],
       "apiHosts": [
         "api.githubcopilot.com",

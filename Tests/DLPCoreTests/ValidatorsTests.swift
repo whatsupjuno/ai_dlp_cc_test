@@ -57,6 +57,14 @@ final class ValidatorsTests: XCTestCase {
         XCTAssertFalse(Validators.krRRNChecksum("9001011234"))      // wrong length
     }
 
+    func testKRRRNDateValidation() {
+        XCTAssertTrue(Validators.krRRNDateValid("900101-1234568"))
+        XCTAssertFalse(Validators.krRRNDateValid("990231-1234567")) // Feb 31 — impossible
+        XCTAssertFalse(Validators.krRRNDateValid("900001-1234567")) // month 00
+        // A valid-looking checksum can't rescue an impossible date.
+        XCTAssertFalse(Validators.krRRNChecksum("990231-1234561"))
+    }
+
     // MARK: ABA routing
 
     func testABARouting() {
