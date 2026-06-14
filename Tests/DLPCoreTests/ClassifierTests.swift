@@ -76,6 +76,13 @@ final class ClassifierTests: XCTestCase {
         }
     }
 
+    func testSharedHostsNotClassifiedAsAI() {
+        // Generic shared hosts must not be classified as AI egress (false positives).
+        XCTAssertNil(classifier.classify(host: "storage.googleapis.com").service)
+        XCTAssertNil(classifier.classify(host: "github.com").service)
+        XCTAssertNil(classifier.classify(host: "discord.com").service)
+    }
+
     func testAnthropicConsoleResolvesToAPIService() {
         // console.anthropic.com is platform/API traffic → monitored, not the
         // consumer Claude tier.

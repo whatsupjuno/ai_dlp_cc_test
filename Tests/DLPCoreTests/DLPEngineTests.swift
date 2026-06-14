@@ -21,6 +21,15 @@ final class DLPEngineTests: XCTestCase {
         XCTAssertFalse(v.redactedContent?.contains("john@acme.com") ?? true)
     }
 
+    func testPost2020RRNStillBlocked() {
+        // codex round-8 regression: a checksum-unverifiable (post-2020) RRN must
+        // still reach block-gov-id-critical, not be silently allowed.
+        let engine = DLPEngine()
+        let v = engine.inspect("고객 주민등록번호 900101-1234567", channel: .clipboard, host: "chatgpt.com")
+        XCTAssertEqual(v.action, .block)
+        XCTAssertTrue(v.findings.contains { $0.type.id == "kr-rrn" })
+    }
+
     func testCleanTextAllows() {
         let engine = DLPEngine()
         let v = engine.inspect("the quick brown fox jumps over the lazy dog",

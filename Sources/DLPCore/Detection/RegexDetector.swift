@@ -65,17 +65,23 @@ public final class RegexDetector: Detector, @unchecked Sendable {
                       NSMaxRange(range) <= ns.length else { return }
 
                 let value = ns.substring(with: range)
-                guard Validators.run(rule.validator, on: value) else { return }
 
-                let note: String? = rule.validator == .none
-                    ? nil
-                    : "validated:\(rule.validator.rawValue)"
+                // Apply the validator. A hard failure (e.g. Luhn on a card) drops
+                // the match; a *soft* failure (KR RRN checksum on a post-2020
+                // randomized number) keeps it at one lower confidence level.
+                var confidence = rule.confidence
+                var note: String? = rule.validator == .none ? nil : "validated:\(rule.validator.rawValue)"
+                if rule.validator != .none, !Validators.run(rule.validator, on: value) {
+                    guard rule.validator.failureIsSoft else { return } // hard fail → drop
+                    confidence = rule.confidence.downgraded
+                    note = "checksum-unverified:\(rule.validator.rawValue)"
+                }
 
                 findings.append(Finding(
                     type: rule.dataType,
                     detectorID: rule.id,
                     severity: rule.severity,
-                    confidence: rule.confidence,
+                    confidence: confidence,
                     span: TextSpan(range),
                     maskedValue: Masking.mask(value),
                     valueFingerprint: Masking.fingerprint(value),

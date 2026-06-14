@@ -20,6 +20,16 @@ public enum Confidence: String, Codable, CaseIterable, Comparable, Sendable {
         lhs.rank < rhs.rank
     }
 
+    /// One confidence level lower (clamped at `.low`). Used when a soft validator
+    /// can't confirm a match but the pattern is still plausible.
+    public var downgraded: Confidence {
+        switch self {
+        case .high: return .medium
+        case .medium: return .low
+        case .low: return .low
+        }
+    }
+
     /// A normalized 0...1 score, convenient for blended risk scoring.
     public var score: Double {
         switch self {

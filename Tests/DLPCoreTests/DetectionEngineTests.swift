@@ -79,6 +79,28 @@ final class DetectionEngineTests: XCTestCase {
         XCTAssertTrue(boosted.first?.note?.contains("context-corroborated") ?? false)
     }
 
+    func testPost2020RRNDowngradedNotDropped() {
+        // Date-valid RRN whose legacy checksum fails (post-2020 randomized suffix).
+        // Must NOT be dropped — reported at one-lower confidence. Booster off so we
+        // observe the raw downgraded value.
+        let f = makeEngine(boost: false).scan("900101-1234567", context: ctx())
+        let rrn = f.first { $0.type.id == "kr-rrn" }
+        XCTAssertNotNil(rrn, "post-2020 RRN must still be detected")
+        XCTAssertEqual(rrn?.confidence, .medium, "checksum-unverified ⇒ one level below high")
+        XCTAssertTrue(rrn?.note?.contains("checksum-unverified") ?? false)
+    }
+
+    func testChecksumValidRRNKeepsHighConfidence() {
+        let f = makeEngine(boost: false).scan("900101-1234568", context: ctx())
+        XCTAssertEqual(f.first { $0.type.id == "kr-rrn" }?.confidence, .high)
+    }
+
+    func testLuhnFailureStillDropsHard() {
+        // A non-soft validator (Luhn) failure still drops the match entirely.
+        let f = makeEngine(boost: false).scan("card 4111 1111 1111 1112", context: ctx())
+        XCTAssertFalse(f.contains { $0.detectorID.hasPrefix("cc") })
+    }
+
     func testNERDetectsPersonName() {
         let f = makeEngine(ner: true).scan("Please contact Barack Obama about the report.", context: ctx())
         XCTAssertTrue(f.contains { $0.category == .identity }, "NER should find a person/identity entity")

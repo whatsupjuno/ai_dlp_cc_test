@@ -166,4 +166,14 @@ public enum ValidatorKind: String, Codable, CaseIterable, Sendable {
     case krRRNChecksum = "kr_rrn_checksum"
     case abaRouting = "aba_routing"
     case npiLuhn = "npi_luhn"
+
+    /// Whether a validation *failure* should DOWNGRADE confidence rather than
+    /// drop the match. True only for the Korean RRN checksum: since the Oct-2020
+    /// format change the trailing digits are randomized and no longer checksum-
+    /// verifiable, so a checksum miss is frequently a real (post-2020) RRN that
+    /// must still be reported — just at lower confidence. For Luhn/IBAN/ABA/NPI a
+    /// failure means "not that data type", so those still drop.
+    public var failureIsSoft: Bool {
+        self == .krRRNChecksum
+    }
 }

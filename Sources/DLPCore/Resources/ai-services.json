@@ -46,8 +46,7 @@
       "webDomains": [
         "claude.ai",
         "anthropic.com",
-        "downloads.claude.ai",
-        "storage.googleapis.com"
+        "downloads.claude.ai"
       ],
       "apiHosts": [
         "claude.ai",
@@ -117,7 +116,6 @@
       "vendor": "GitHub / Microsoft",
       "defaultTier": "monitored",
       "webDomains": [
-        "github.com",
         "githubcopilot.com",
         "githubusercontent.com"
       ],
@@ -273,7 +271,6 @@
       ],
       "apiHosts": [
         "midjourney.com",
-        "discord.com",
         "gateway.discord.gg"
       ],
       "notes": "Image generation. Historically driven through Discord (so egress prompts/images ride discord.com / gateway.discord.gg - blocking Midjourney via Discord is impossible without blocking Discord entirely), now also a native web app at midjourney.com (alpha/web). Egress is text prompts and reference-image uploads; generated assets pull from cdn.midjourney.com. The Discord coupling is the key interception challenge. Default unsanctioned."
