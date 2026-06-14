@@ -1,0 +1,356 @@
+{
+  "version": 1,
+  "services": [
+    {
+      "id": "openai-chatgpt",
+      "name": "OpenAI ChatGPT (consumer/Team/Enterprise web + apps)",
+      "vendor": "OpenAI",
+      "defaultTier": "unsanctioned",
+      "webDomains": [
+        "chatgpt.com",
+        "chat.openai.com",
+        "openai.com",
+        "ab.chatgpt.com",
+        "cdn.oaistatic.com",
+        "files.oaiusercontent.com",
+        "auth.openai.com",
+        "auth0.openai.com"
+      ],
+      "apiHosts": [
+        "chatgpt.com",
+        "ab.chatgpt.com",
+        "ios.chat.openai.com",
+        "android.chat.openai.com"
+      ],
+      "notes": "Primary egress is browser paste/upload into chatgpt.com (now the canonical host; chat.openai.com redirects). Desktop/mobile apps hit the same web surface plus *.chat.openai.com. File uploads land on files.oaiusercontent.com. Voice uses UDP/3478 (WebRTC). All TLS - a non-MITM filter sees only SNI/host, not the prompt body. Default unsanctioned because the consumer tier may train on data unless org has a ChatGPT Enterprise/Team contract; promote to sanctioned only for the licensed tenant."
+    },
+    {
+      "id": "openai-api",
+      "name": "OpenAI API (platform)",
+      "vendor": "OpenAI",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "platform.openai.com"
+      ],
+      "apiHosts": [
+        "api.openai.com",
+        "api.openai.com.cdn.cloudflare.net"
+      ],
+      "notes": "Programmatic egress from code, IDE assistants, SDKs and agents. All traffic to api.openai.com over TLS 443; body is JSON chat/completions/embeddings/files payloads, invisible without MITM. Bearer key in Authorization header (also encrypted). Azure-hosted variant uses <resource>.openai.azure.com and cognitiveservices.azure.com - treat separately. Monitored rather than blocked because API use is often legitimate dev/prod traffic; egress risk is bulk data sent to embeddings/files endpoints."
+    },
+    {
+      "id": "anthropic-claude",
+      "name": "Anthropic Claude (claude.ai web/app)",
+      "vendor": "Anthropic",
+      "defaultTier": "unsanctioned",
+      "webDomains": [
+        "claude.ai",
+        "anthropic.com",
+        "console.anthropic.com",
+        "downloads.claude.ai",
+        "storage.googleapis.com"
+      ],
+      "apiHosts": [
+        "claude.ai",
+        "api.claude.ai"
+      ],
+      "notes": "Consumer/Pro web egress is browser paste/upload into claude.ai; the desktop app and Claude Code also authenticate via claude.ai. File/artifact uploads may transit storage.googleapis.com (shared Google CDN - cannot be blocked wholesale without collateral). TLS-only; filter sees SNI claude.ai but not prompt content. Default unsanctioned for the consumer surface; promote to sanctioned for licensed Team/Enterprise tenants."
+    },
+    {
+      "id": "anthropic-api",
+      "name": "Anthropic Claude API (platform / Claude Code)",
+      "vendor": "Anthropic",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "console.anthropic.com",
+        "platform.claude.com",
+        "docs.anthropic.com"
+      ],
+      "apiHosts": [
+        "api.anthropic.com",
+        "a-api.anthropic.com"
+      ],
+      "notes": "Programmatic Messages API egress over TLS 443 to api.anthropic.com (a-api.anthropic.com is the anycast variant). Used by SDKs, IDE plugins, Claude Code and agent frameworks. x-api-key header is encrypted. Body is JSON message content - not visible without TLS interception. Monitored because legitimate dev traffic dominates; watch for large file/document blocks in request bodies."
+    },
+    {
+      "id": "google-gemini",
+      "name": "Google Gemini (app + AI Studio)",
+      "vendor": "Google",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "gemini.google.com",
+        "aistudio.google.com",
+        "bard.google.com",
+        "labs.google"
+      ],
+      "apiHosts": [
+        "generativelanguage.googleapis.com",
+        "aiplatform.googleapis.com",
+        "us-central1-aiplatform.googleapis.com"
+      ],
+      "notes": "Consumer egress via paste into gemini.google.com (formerly bard.google.com); developer egress via aistudio.google.com (proxies to generativelanguage.googleapis.com) and Vertex AI (*-aiplatform.googleapis.com). Hard to fully block by host because *.googleapis.com and *.google.com are shared with Workspace/Search - blocking them breaks the org. SNI-based selective allow is fragile. Default monitored; if the org runs Workspace with Gemini governance, treat gemini.google.com as sanctioned within tenant."
+    },
+    {
+      "id": "microsoft-copilot",
+      "name": "Microsoft Copilot (M365 Copilot + consumer Copilot)",
+      "vendor": "Microsoft",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "copilot.microsoft.com",
+        "copilot.cloud.microsoft",
+        "m365.cloud.microsoft",
+        "office.com",
+        "outlook.office.com",
+        "bing.com",
+        "edgeservices.bing.com"
+      ],
+      "apiHosts": [
+        "substrate.office.com",
+        "m365.cloud.microsoft",
+        "copilot.cloud.microsoft",
+        "gateway.prod.island.powerapps.com"
+      ],
+      "notes": "Enterprise M365 Copilot rides inside the existing Microsoft 365 substrate (*.cloud.microsoft, *.office.com, substrate.office.com) and requires WebSocket/WSS - data egress is indistinguishable at the host level from normal Office traffic, so a content filter cannot separate Copilot from Outlook/Teams without payload inspection. Consumer Copilot (copilot.microsoft.com, formerly Bing Chat / edgeservices.bing.com) is the higher-risk unsanctioned surface. Note Microsoft is mid-migration to the cloud.microsoft domain. Monitored overall; consumer copilot.microsoft.com leans unsanctioned."
+    },
+    {
+      "id": "github-copilot",
+      "name": "GitHub Copilot (IDE code completion + Chat)",
+      "vendor": "GitHub / Microsoft",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "github.com",
+        "githubcopilot.com",
+        "githubusercontent.com"
+      ],
+      "apiHosts": [
+        "api.githubcopilot.com",
+        "copilot-proxy.githubusercontent.com",
+        "origin-tracker.githubusercontent.com",
+        "default.exp-tas.com",
+        "proxy.individual.githubcopilot.com",
+        "proxy.business.githubcopilot.com",
+        "proxy.enterprise.githubcopilot.com"
+      ],
+      "notes": "Egress is source code: editor buffers/context sent for completions to *.githubcopilot.com and Chat to api.githubcopilot.com (Chat moved off copilot-proxy.githubusercontent.com in 2024). TLS-only; the code payload is invisible without MITM. *.githubusercontent.com and github.com are shared with normal Git/raw-content use, complicating host-only blocking. Monitored; the data-leak concern is proprietary code leaving via IDE rather than browser paste."
+    },
+    {
+      "id": "perplexity",
+      "name": "Perplexity AI",
+      "vendor": "Perplexity",
+      "defaultTier": "unsanctioned",
+      "webDomains": [
+        "perplexity.ai",
+        "www.perplexity.ai"
+      ],
+      "apiHosts": [
+        "api.perplexity.ai"
+      ],
+      "notes": "Browser-paste and query egress to perplexity.ai; developer/agent egress to api.perplexity.ai (Sonar models) over TLS 443. Comparatively clean, dedicated hostnames make host/SNI-based detection reliable. Default unsanctioned consumer research tool; uploaded files/documents are the egress risk."
+    },
+    {
+      "id": "mistral",
+      "name": "Mistral AI (Le Chat + API)",
+      "vendor": "Mistral AI",
+      "defaultTier": "unsanctioned",
+      "webDomains": [
+        "mistral.ai",
+        "chat.mistral.ai",
+        "console.mistral.ai"
+      ],
+      "apiHosts": [
+        "api.mistral.ai",
+        "codestral.mistral.ai"
+      ],
+      "notes": "Consumer egress via paste into chat.mistral.ai (Le Chat); developer egress to api.mistral.ai and the code-specific codestral.mistral.ai. Dedicated hostnames make SNI detection reliable. TLS-only payloads. Default unsanctioned for Le Chat; api.mistral.ai is monitored dev traffic."
+    },
+    {
+      "id": "cohere",
+      "name": "Cohere",
+      "vendor": "Cohere",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "cohere.com",
+        "dashboard.cohere.com",
+        "coral.cohere.com"
+      ],
+      "apiHosts": [
+        "api.cohere.com",
+        "api.cohere.ai"
+      ],
+      "notes": "Primarily an enterprise API/RAG vendor; egress is programmatic to api.cohere.com (legacy api.cohere.ai) - chat, embed, rerank, and document ingestion endpoints. coral.cohere.com is the chat UI. Embeddings/rerank endpoints can carry bulk document corpora, so large-body POSTs are the egress signal. TLS-only. Monitored as a dev/data-platform destination."
+    },
+    {
+      "id": "huggingface",
+      "name": "Hugging Face (Hub + Inference + HuggingChat)",
+      "vendor": "Hugging Face",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "huggingface.co",
+        "hf.co",
+        "huggingface.com"
+      ],
+      "apiHosts": [
+        "api-inference.huggingface.co",
+        "router.huggingface.co",
+        "datasets-server.huggingface.co",
+        "cdn-lfs.huggingface.co",
+        "endpoints.huggingface.cloud"
+      ],
+      "notes": "Multi-modal risk: model/dataset uploads to the Hub (huggingface.co / cdn-lfs via git-LFS), serverless inference (api-inference.huggingface.co, router.huggingface.co), dedicated Inference Endpoints (*.endpoints.huggingface.cloud), and HuggingChat browser paste. The dataset/LFS push path is a real bulk-exfil vector (pushing a private dataset). TLS-only. Monitored; dataset/model pushes are the high-signal egress."
+    },
+    {
+      "id": "poe",
+      "name": "Poe (Quora multi-model aggregator)",
+      "vendor": "Quora",
+      "defaultTier": "unsanctioned",
+      "webDomains": [
+        "poe.com",
+        "www.poe.com"
+      ],
+      "apiHosts": [
+        "api.poe.com",
+        "poe.com"
+      ],
+      "notes": "Aggregator front-end that proxies to many backend models (GPT, Claude, Gemini, etc.), so a single poe.com destination masks which model ultimately receives the data - a governance blind spot. Browser-paste/upload egress to poe.com; bot-API to api.poe.com. Dedicated hostname makes blocking easy but the aggregation hides the true recipient. Default unsanctioned."
+    },
+    {
+      "id": "character-ai",
+      "name": "Character.AI",
+      "vendor": "Character Technologies",
+      "defaultTier": "unsanctioned",
+      "webDomains": [
+        "character.ai",
+        "beta.character.ai",
+        "character.com"
+      ],
+      "apiHosts": [
+        "plus.character.ai",
+        "neo.character.ai",
+        "character.ai"
+      ],
+      "notes": "Consumer roleplay/chat companion; egress is conversational text pasted into character.ai. Limited enterprise value and known data-retention concerns make it a typical block candidate. neo.character.ai / plus.character.ai carry the chat traffic. TLS-only. Default unsanctioned, frequently escalated to blocked."
+    },
+    {
+      "id": "deepseek",
+      "name": "DeepSeek",
+      "vendor": "DeepSeek (High-Flyer)",
+      "defaultTier": "blocked",
+      "webDomains": [
+        "deepseek.com",
+        "chat.deepseek.com",
+        "deepseek.ai"
+      ],
+      "apiHosts": [
+        "api.deepseek.com",
+        "api-docs.deepseek.com"
+      ],
+      "notes": "China-based provider; data residency/jurisdiction concerns lead many enterprises to block by default. Consumer egress via paste into chat.deepseek.com; developer egress to api.deepseek.com (OpenAI-compatible schema). Dedicated hostnames make SNI/host blocking reliable. TLS-only payloads. Default blocked in regulated environments; monitored at minimum elsewhere."
+    },
+    {
+      "id": "xai-grok",
+      "name": "xAI Grok",
+      "vendor": "xAI",
+      "defaultTier": "unsanctioned",
+      "webDomains": [
+        "grok.com",
+        "x.ai",
+        "console.x.ai"
+      ],
+      "apiHosts": [
+        "api.x.ai",
+        "grok.com"
+      ],
+      "notes": "Consumer Grok is reachable at grok.com and embedded inside X (x.com / twitter.com), which complicates host-based control because blocking Grok-in-X means blocking the social platform. Developer egress to api.x.ai (OpenAI-compatible). Standalone grok.com paste is the cleanest detection point. TLS-only. Default unsanctioned."
+    },
+    {
+      "id": "midjourney",
+      "name": "Midjourney",
+      "vendor": "Midjourney",
+      "defaultTier": "unsanctioned",
+      "webDomains": [
+        "midjourney.com",
+        "www.midjourney.com",
+        "cdn.midjourney.com"
+      ],
+      "apiHosts": [
+        "midjourney.com",
+        "discord.com",
+        "gateway.discord.gg"
+      ],
+      "notes": "Image generation. Historically driven through Discord (so egress prompts/images ride discord.com / gateway.discord.gg - blocking Midjourney via Discord is impossible without blocking Discord entirely), now also a native web app at midjourney.com (alpha/web). Egress is text prompts and reference-image uploads; generated assets pull from cdn.midjourney.com. The Discord coupling is the key interception challenge. Default unsanctioned."
+    },
+    {
+      "id": "replicate",
+      "name": "Replicate",
+      "vendor": "Replicate",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "replicate.com",
+        "replicate.delivery"
+      ],
+      "apiHosts": [
+        "api.replicate.com",
+        "replicate.delivery",
+        "pbxt.replicate.delivery"
+      ],
+      "notes": "Model-hosting/inference marketplace; programmatic egress to api.replicate.com (run any community model). Inputs (images, audio, text, files) and outputs transit replicate.delivery / pbxt.replicate.delivery (CDN). Bulk media uploads to arbitrary third-party models are the egress concern. TLS-only. Monitored as a dev/inference destination."
+    },
+    {
+      "id": "together-ai",
+      "name": "Together AI",
+      "vendor": "Together Computer",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "together.ai",
+        "api.together.ai",
+        "together.xyz"
+      ],
+      "apiHosts": [
+        "api.together.xyz",
+        "api.together.ai"
+      ],
+      "notes": "Open-model inference and fine-tuning platform; programmatic egress to api.together.xyz (canonical) / api.together.ai. Fine-tuning file uploads are a bulk-exfil path (training-set upload). OpenAI-compatible schema. TLS-only. Monitored as a dev/inference and fine-tuning destination - flag large file uploads."
+    },
+    {
+      "id": "you-com",
+      "name": "You.com",
+      "vendor": "You.com",
+      "defaultTier": "unsanctioned",
+      "webDomains": [
+        "you.com",
+        "www.you.com"
+      ],
+      "apiHosts": [
+        "api.you.com",
+        "chat-api.you.com",
+        "you.com"
+      ],
+      "notes": "AI search/assistant; browser-paste egress to you.com (YouChat/research modes) and developer egress to api.you.com / chat-api.you.com (Search and Research APIs). Dedicated hostnames make detection reliable. TLS-only. Default unsanctioned consumer assistant."
+    },
+    {
+      "id": "local-proxy-patterns",
+      "name": "Local LLMs, gateways, and proxy/relay patterns",
+      "vendor": "Various / self-hosted",
+      "defaultTier": "monitored",
+      "webDomains": [
+        "openrouter.ai",
+        "ngrok.io",
+        "ngrok-free.app",
+        "trycloudflare.com",
+        "openai.azure.com"
+      ],
+      "apiHosts": [
+        "openrouter.ai",
+        "api.openrouter.ai",
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "host.docker.internal",
+        "openai.azure.com",
+        "ngrok.io",
+        "trycloudflare.com"
+      ],
+      "notes": "Critical blind spots a host-allowlist misses: (1) Local inference - Ollama (127.0.0.1:11434), LM Studio, llama.cpp, vLLM - stays on loopback, never crosses a NetworkExtension content filter, so only Endpoint Security exec/file telemetry sees it; this is loopback-exfil into a local model that may then sync. (2) Aggregator/relay gateways - OpenRouter (openrouter.ai) and self-hosted LiteLLM proxy abstract the true model vendor behind one endpoint, defeating per-vendor host rules. (3) Tunnels - ngrok (*.ngrok.io / *.ngrok-free.app), Cloudflare Tunnel (*.trycloudflare.com) can relay prompts to an arbitrary backend, bypassing vendor-specific blocks. (4) Cloud-hosted variants - Azure OpenAI (*.openai.azure.com), AWS Bedrock (bedrock-runtime.<region>.amazonaws.com), Vertex - move LLM egress onto generic cloud hostnames. A DLP must treat these as escape hatches, not just enumerate name-brand vendors."
+    }
+  ]
+}

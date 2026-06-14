@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: Build & Test (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app || sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Toolchain info
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: Build (all products)
+        run: swift build --build-tests -v
+
+      - name: Test
+        run: swift test --skip-build
+
+      - name: Lint detection patterns
+        run: |
+          swift build --product dlpctl
+          .build/debug/dlpctl patterns --lint
+
+      - name: CLI smoke test (detection + exit codes)
+        run: |
+          set -e
+          BIN=.build/debug/dlpctl
+          # A blocked secret must exit non-zero.
+          if echo 'key sk-ant-api03-AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555' | $BIN scan --host chatgpt.com; then
+            echo "expected non-zero exit on blocked egress"; exit 1
+          fi
+          # Clean text must exit zero.
+          echo 'the quick brown fox' | $BIN scan
+          # Catalog + policy render without error.
+          $BIN services > /dev/null
+          $BIN policy > /dev/null

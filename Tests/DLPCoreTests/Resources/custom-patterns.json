@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "patterns": [
+    {
+      "id": "acme-employee-id",
+      "name": "ACME Employee ID",
+      "category": "pii",
+      "severity": "medium",
+      "regex": "\\bACME-[0-9]{6}\\b",
+      "validator": "none",
+      "confidence": "high",
+      "description": "Internal employee identifier.",
+      "exampleMatch": "ACME-123456",
+      "country": "global"
+    }
+  ]
+}
