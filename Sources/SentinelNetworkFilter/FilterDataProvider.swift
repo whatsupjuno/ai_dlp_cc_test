@@ -33,6 +33,11 @@ public final class FilterDataProvider: NEFilterDataProvider {
     /// sent yet, so (unlike a held tail) it can never withhold an already-sent
     /// request tail and deadlock a keep-alive upload.
     private let peekChunk = 4 * 1024
+    /// Bytes to peek before the FIRST handleOutboundData callback. Must be below a
+    /// TLS ClientHello so the OS doesn't withhold the handshake waiting to fill the
+    /// peek (which would stall connection setup); 1 means "deliver as soon as any
+    /// outbound byte is available" — the OS then hands over whatever is buffered.
+    private let initialPeek = 1
 
     /// Per-flow accumulated outbound buffer (for cumulative inspection). `seen`
     /// is the highest absolute offset accumulated, so a cumulative/re-delivered
@@ -123,7 +128,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
             // audited in handleOutboundData if any appear.
             return .filterDataVerdict(
                 withFilterInbound: false, peekInboundBytes: 0,
-                filterOutbound: true, peekOutboundBytes: peekChunk)
+                filterOutbound: true, peekOutboundBytes: initialPeek)
 
         case .monitored, .unsanctioned:
             // Record the destination-tier egress ONCE now, at flow creation. The
@@ -136,7 +141,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
                 withFilterInbound: false,
                 peekInboundBytes: 0,
                 filterOutbound: true,
-                peekOutboundBytes: peekChunk
+                peekOutboundBytes: initialPeek
             )
         }
     }
