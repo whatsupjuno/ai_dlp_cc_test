@@ -123,7 +123,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
             // audited in handleOutboundData if any appear.
             return .filterDataVerdict(
                 withFilterInbound: false, peekInboundBytes: 0,
-                filterOutbound: true, peekOutboundBytes: maxAccumulate)
+                filterOutbound: true, peekOutboundBytes: peekChunk)
 
         case .monitored, .unsanctioned:
             // Record the destination-tier egress ONCE now, at flow creation. The
@@ -136,7 +136,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
                 withFilterInbound: false,
                 peekInboundBytes: 0,
                 filterOutbound: true,
-                peekOutboundBytes: maxAccumulate
+                peekOutboundBytes: peekChunk
             )
         }
     }
