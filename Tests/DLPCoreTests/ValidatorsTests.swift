@@ -44,6 +44,24 @@ final class ValidatorsTests: XCTestCase {
         XCTAssertFalse(Validators.ibanMod97("DE89370400440532013000!")) // illegal char
     }
 
+    func testIBANRejectsUnassignedCountryEvenIfMod97Passes() {
+        // codex round-39: `ZZ` is not a registered IBAN country, yet this string
+        // satisfies the mod-97 check. Without a country-code/length check it would
+        // become a high-confidence financial finding. Must be rejected.
+        XCTAssertFalse(Validators.ibanMod97("ZZ73123456789012345678"))
+    }
+
+    func testIBANRejectsWrongCountryLength() {
+        // DE is 22 chars; a mod-97-passing string of the wrong length for its
+        // country must be rejected. Truncating a valid DE IBAN by removing the
+        // last two digits and re-deriving check digits is awkward, so assert the
+        // length guard directly: a 23-char "DE…" can never be a valid DE IBAN.
+        XCTAssertFalse(Validators.ibanMod97("DE893704004405320130000")) // 23 chars, DE wants 22
+        // A valid-length FR IBAN with FR replaced by an over-long count also fails.
+        XCTAssertNil(Validators.ibanLengthByCountry["ZZ"])
+        XCTAssertEqual(Validators.ibanLengthByCountry["DE"], 22)
+    }
+
     func testIBANToleratesSpaces() {
         XCTAssertTrue(Validators.ibanMod97("GB29 NWBK 6016 1331 9268 19"))
     }

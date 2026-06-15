@@ -70,10 +70,41 @@ public enum Validators {
 
     // MARK: - IBAN (ISO 13616, mod-97)
 
-    /// Validate an IBAN via the ISO 7064 mod-97 check (expected remainder 1).
+    /// Official ISO 13616 IBAN registry: country code → exact total IBAN length.
+    /// mod-97 alone accepts ~1 in 97 random strings and never rejects unassigned
+    /// country codes (e.g. `ZZ…`), so we also require a registered country with
+    /// its exact length before treating a match as a real IBAN.
+    static let ibanLengthByCountry: [String: Int] = [
+        "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16,
+        "BG": 22, "BH": 22, "BI": 27, "BR": 29, "BY": 28, "CH": 21, "CR": 22,
+        "CY": 28, "CZ": 24, "DE": 22, "DJ": 27, "DK": 18, "DO": 28, "EE": 20,
+        "EG": 29, "ES": 24, "FI": 18, "FK": 18, "FO": 18, "FR": 27, "GB": 22,
+        "GE": 22, "GI": 23, "GL": 18, "GR": 27, "GT": 28, "HN": 28, "HR": 21,
+        "HU": 28, "IE": 22, "IL": 23, "IQ": 23, "IS": 26, "IT": 27, "JO": 30,
+        "KW": 30, "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20,
+        "LV": 21, "LY": 25, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MN": 20,
+        "MR": 27, "MT": 31, "MU": 30, "NI": 28, "NL": 18, "NO": 15, "OM": 23,
+        "PK": 24, "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22,
+        "RU": 33, "SA": 24, "SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24,
+        "SM": 27, "SO": 23, "ST": 25, "SV": 28, "TL": 23, "TN": 24, "TR": 26,
+        "UA": 29, "VA": 22, "VG": 24, "XK": 20
+    ]
+
+    /// Validate an IBAN: registered ISO country code, exact country-specific
+    /// length, numeric check digits, then the ISO 7064 mod-97 check (remainder 1).
     public static func ibanMod97(_ raw: String) -> Bool {
         let s = compact(raw).uppercased()
         guard s.count >= 15, s.count <= 34 else { return false }
+        // Positions 1-2 are the ISO 3166 country code; it must be registered and
+        // the total length must match that country exactly (the pattern docs
+        // promise per-country length validation). This rejects `ZZ…` and any
+        // mod-97-coincidental string whose length is wrong for its country.
+        let country = String(s.prefix(2))
+        guard country.allSatisfy({ $0.isLetter }),
+              let expectedLength = ibanLengthByCountry[country],
+              s.count == expectedLength else { return false }
+        // Positions 3-4 are the check digits and must be numeric.
+        guard s.dropFirst(2).prefix(2).allSatisfy({ $0.isNumber }) else { return false }
         // Move the first four characters to the end.
         let rearranged = String(s.dropFirst(4)) + String(s.prefix(4))
         // Convert letters to numbers: A=10 ... Z=35.
