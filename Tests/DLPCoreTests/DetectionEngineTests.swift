@@ -37,6 +37,25 @@ final class DetectionEngineTests: XCTestCase {
         XCTAssertTrue(f.contains { $0.type.id == "iban" }, "grouped IBAN should be detected")
     }
 
+    func testBICDoesNotSelfCorroborate() {
+        // codex round-44: "CARDUS33" matches the low-confidence BIC pattern and
+        // contains the lexicon word "card" INSIDE its own span. The booster must
+        // exclude the match itself, so a standalone token stays low confidence and
+        // never crosses the warn-financial threshold without real context.
+        let f = makeEngine().scan("CARDUS33", context: ctx())
+        let bic = f.first { $0.detectorID == "swift-bic" }
+        XCTAssertNotNil(bic, "CARDUS33 should match the BIC pattern")
+        XCTAssertEqual(bic?.confidence, .low, "a self-contained lexicon word must not boost the finding")
+    }
+
+    func testBICStillBoostedByNeighborKeyword() {
+        // The fix must not disable real corroboration: a BIC token with no lexicon
+        // word of its own, next to a genuine keyword, is still promoted.
+        let f = makeEngine().scan("wire to account XYZWUS33 today", context: ctx())
+        let bic = f.first { $0.detectorID == "swift-bic" }
+        XCTAssertEqual(bic?.confidence, .medium, "a neighboring keyword should still boost")
+    }
+
     func testIBANNotReportedInsideLongerToken() {
         // codex round-43: a valid IBAN that runs straight into more word chars
         // (no separator) is part of a longer ID/token, not an IBAN, and must not be

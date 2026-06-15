@@ -45,7 +45,18 @@ public struct ContextBooster: Sendable {
             let lo = max(0, f.span.location - window)
             let hi = min(len, f.span.upperBound + window)
             guard hi > lo else { return f }
-            let around = ns.substring(with: NSRange(location: lo, length: hi - lo)).lowercased()
+
+            // Inspect only the context on EITHER SIDE of the match, never the match
+            // itself: a token like "CARDUS33"/"VISAGB2L" contains a lexicon word
+            // ("card"/"visa") inside its own span, so including it would let the
+            // finding self-corroborate and cross the warn threshold with no real
+            // surrounding context. The two sides are joined with a newline so a
+            // keyword can't be spuriously formed across the excised gap.
+            let leftLen = f.span.location - lo
+            let rightLen = hi - f.span.upperBound
+            let left = leftLen > 0 ? ns.substring(with: NSRange(location: lo, length: leftLen)) : ""
+            let right = rightLen > 0 ? ns.substring(with: NSRange(location: f.span.upperBound, length: rightLen)) : ""
+            let around = (left + "\n" + right).lowercased()
 
             guard keywords.contains(where: { around.contains($0) }) else { return f }
             guard f.confidence < .high else { return f } // already maxed
