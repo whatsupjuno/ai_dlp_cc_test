@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Info.plist template for the NetworkExtension system extension. The NSExtension
+  dictionary registers FilterDataProvider as the filter-data principal class.
+  $(PRODUCT_MODULE_NAME) resolves to the extension target's module at build time.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.sentinel.dlp.agent.networkfilter</string>
+    <key>CFBundleExecutable</key>
+    <string>SentinelNetworkFilter</string>
+    <key>CFBundlePackageType</key>
+    <string>SYSX</string>
+    <key>CFBundleName</key>
+    <string>Sentinel Network Filter</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>NSExtension</key>
+    <dict>
+        <key>NSExtensionPointIdentifier</key>
+        <string>com.apple.networkextension.filter-data</string>
+        <key>NSExtensionPrincipalClass</key>
+        <string>$(PRODUCT_MODULE_NAME).FilterDataProvider</string>
+    </dict>
+</dict>
+</plist>

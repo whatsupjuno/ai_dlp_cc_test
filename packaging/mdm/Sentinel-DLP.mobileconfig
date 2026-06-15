@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ============================================================================
+  Sentinel AI-DLP — MDM configuration profile (silent enterprise deployment)
+  ============================================================================
+  Push via Jamf / Kandji / Intune / Mosyle to pre-approve the system extension,
+  enable the content filter, and grant TCC permissions WITHOUT any end-user
+  prompt. Replace:
+     ABCDE12345   -> your Apple Developer Team ID
+     <designated requirement strings> -> output of:
+        codesign -dr - /Applications/Sentinel.app/...   (per binary)
+  ============================================================================
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadDisplayName</key>
+    <string>Sentinel AI-DLP</string>
+    <key>PayloadIdentifier</key>
+    <string>com.sentinel.dlp.profile</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>F0E1D2C3-0000-4000-8000-000000000001</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadScope</key>
+    <string>System</string>
+    <key>PayloadContent</key>
+    <array>
+
+        <!-- 1) Pre-approve the system extensions (no user approval prompt) -->
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.system-extension-policy</string>
+            <key>PayloadIdentifier</key>
+            <string>com.sentinel.dlp.sysext</string>
+            <key>PayloadUUID</key>
+            <string>F0E1D2C3-0000-4000-8000-000000000002</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>AllowUserOverrides</key>
+            <true/>
+            <key>AllowedSystemExtensions</key>
+            <dict>
+                <key>ABCDE12345</key>
+                <array>
+                    <string>com.sentinel.dlp.agent.networkfilter</string>
+                    <string>com.sentinel.dlp.agent.endpointsecurity</string>
+                </array>
+            </dict>
+        </dict>
+
+        <!-- 2) Enable the socket content filter -->
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.webcontent-filter</string>
+            <key>PayloadIdentifier</key>
+            <string>com.sentinel.dlp.filter</string>
+            <key>PayloadUUID</key>
+            <string>F0E1D2C3-0000-4000-8000-000000000003</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>FilterType</key>
+            <string>Plugin</string>
+            <key>UserDefinedName</key>
+            <string>Sentinel AI-DLP</string>
+            <key>PluginBundleID</key>
+            <string>com.sentinel.dlp.agent</string>
+            <key>FilterDataProviderBundleIdentifier</key>
+            <string>com.sentinel.dlp.agent.networkfilter</string>
+            <key>FilterDataProviderDesignatedRequirement</key>
+            <string>anchor apple generic and identifier "com.sentinel.dlp.agent.networkfilter" and certificate leaf[subject.OU] = "ABCDE12345"</string>
+            <key>FilterSockets</key>
+            <true/>
+            <key>FilterPackets</key>
+            <false/>
+        </dict>
+
+        <!-- 3) PPPC / TCC: pre-grant the agent the access it needs -->
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.TCC.configuration-profile-policy</string>
+            <key>PayloadIdentifier</key>
+            <string>com.sentinel.dlp.pppc</string>
+            <key>PayloadUUID</key>
+            <string>F0E1D2C3-0000-4000-8000-000000000004</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>Services</key>
+            <dict>
+                <key>SystemPolicyAllFiles</key>
+                <array>
+                    <dict>
+                        <key>Identifier</key>
+                        <string>com.sentinel.dlp.agent</string>
+                        <key>IdentifierType</key>
+                        <string>bundleID</string>
+                        <key>CodeRequirement</key>
+                        <string>anchor apple generic and identifier "com.sentinel.dlp.agent" and certificate leaf[subject.OU] = "ABCDE12345"</string>
+                        <key>Allowed</key>
+                        <true/>
+                    </dict>
+                </array>
+            </dict>
+        </dict>
+
+        <!-- 4) Auto-launch the agent at login (managed, non-removable) -->
+        <dict>
+            <key>PayloadType</key>
+            <string>com.apple.servicemanagement</string>
+            <key>PayloadIdentifier</key>
+            <string>com.sentinel.dlp.loginitem</string>
+            <key>PayloadUUID</key>
+            <string>F0E1D2C3-0000-4000-8000-000000000005</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>Rules</key>
+            <array>
+                <dict>
+                    <key>RuleType</key>
+                    <string>BundleIdentifier</string>
+                    <key>RuleValue</key>
+                    <string>com.sentinel.dlp.agent</string>
+                </dict>
+            </array>
+        </dict>
+
+    </array>
+</dict>
+</plist>

@@ -1,0 +1,105 @@
+import Foundation
+import DLPCore
+import AppKit
+
+/// Watches the system pasteboard for new text. When a user copies something —
+/// the precursor to pasting it into a web AI tool — we get the chance to inspect
+/// it before it ever leaves the machine. Requires **no** entitlements or system
+/// extension, which makes it the most portable enforcement vector (and the live
+/// demo of the whole pipeline).
+///
+/// Implementation: a `DispatchSourceTimer` polls `NSPasteboard.changeCount`
+/// (cheap, an integer compare) a few times per second. We deliberately do not
+/// add ourselves as a pasteboard *owner* so we never interfere with normal copy
+/// / paste; we only read.
+public final class ClipboardMonitor: Monitor, @unchecked Sendable {
+    public let id = "clipboard"
+
+    private let pasteboard: NSPasteboard
+    private let interval: TimeInterval
+    private let handler: @Sendable (MonitoredPayload) -> Void
+    private let queue = DispatchQueue(label: "dlp.monitor.clipboard")
+    /// Marks `queue` so we can detect re-entrant calls (enforce runs on it).
+    private static let queueKey = DispatchSpecificKey<UInt8>()
+
+    private var timer: DispatchSourceTimer?
+    private var lastChangeCount: Int
+
+    public init(
+        pasteboard: NSPasteboard = .general,
+        interval: TimeInterval = 0.25,
+        handler: @escaping @Sendable (MonitoredPayload) -> Void
+    ) {
+        self.pasteboard = pasteboard
+        self.interval = interval
+        self.handler = handler
+        // Seed with the current count so we don't fire on whatever is already
+        // on the clipboard at launch.
+        self.lastChangeCount = pasteboard.changeCount
+        queue.setSpecific(key: Self.queueKey, value: 1)
+    }
+
+    public func start() throws {
+        let t = DispatchSource.makeTimerSource(queue: queue)
+        t.schedule(deadline: .now() + interval, repeating: interval, leeway: .milliseconds(50))
+        t.setEventHandler { [weak self] in self?.poll() }
+        timer = t
+        t.resume()
+    }
+
+    public func stop() {
+        timer?.cancel()
+        timer = nil
+    }
+
+    private func poll() {
+        let current = pasteboard.changeCount
+        guard current != lastChangeCount else { return }
+        lastChangeCount = current
+
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else { return }
+        let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        handler(MonitoredPayload(text: text, channel: .clipboard, sourceApp: app, origin: "pasteboard"))
+    }
+
+    /// Replace the clipboard contents — used to enforce a `redact` verdict on the
+    /// clipboard vector (swap the secret for its sanitized form) or to clear it
+    /// on `block`. Updates `lastChangeCount` so our own write doesn't re-trigger
+    /// inspection on the next poll. Returns the resulting pasteboard change-count
+    /// so callers can bind a later "restore" to exactly this clipboard state.
+    @discardableResult
+    public func replaceClipboard(with newValue: String) -> Int {
+        // Serialize with poll() on the monitor queue so `lastChangeCount` and the
+        // clear/set/read sequence can't be raced by the timer. The enforce path
+        // already runs on the queue (called from the poll handler), so run inline
+        // there to avoid a sync-onto-self deadlock; the app's confirm path comes
+        // from the main thread and is dispatched onto the queue.
+        if DispatchQueue.getSpecific(key: Self.queueKey) == 1 {
+            return performReplace(with: newValue)
+        }
+        return queue.sync { performReplace(with: newValue) }
+    }
+
+    private func performReplace(with newValue: String) -> Int {
+        pasteboard.clearContents()
+        pasteboard.setString(newValue, forType: .string)
+        lastChangeCount = pasteboard.changeCount
+        return lastChangeCount
+    }
+
+    /// Restore `text` to the clipboard ONLY if the pasteboard is still at
+    /// `expectedChangeCount` — checked atomically on the monitor queue right
+    /// before clearing/restoring, so a clipboard write that lands between the
+    /// caller's decision and this point can't be overwritten with stale content.
+    /// Returns whether the restore happened.
+    @discardableResult
+    public func restoreIfUnchanged(_ text: String, expectedChangeCount: Int) -> Bool {
+        let op: () -> Bool = {
+            guard self.pasteboard.changeCount == expectedChangeCount else { return false }
+            _ = self.performReplace(with: text)
+            return true
+        }
+        if DispatchQueue.getSpecific(key: Self.queueKey) == 1 { return op() }
+        return queue.sync(execute: op)
+    }
+}
