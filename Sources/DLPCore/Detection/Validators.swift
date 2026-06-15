@@ -87,7 +87,7 @@ public enum Validators {
         "PK": 24, "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22,
         "RU": 33, "SA": 24, "SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24,
         "SM": 27, "SO": 23, "ST": 25, "SV": 28, "TL": 23, "TN": 24, "TR": 26,
-        "UA": 29, "VA": 22, "VG": 24, "XK": 20
+        "UA": 29, "VA": 22, "VG": 24, "XK": 20, "YE": 30
     ]
 
     /// Validate an IBAN: registered ISO country code, exact country-specific

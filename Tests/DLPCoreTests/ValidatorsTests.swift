@@ -66,6 +66,13 @@ final class ValidatorsTests: XCTestCase {
         XCTAssertTrue(Validators.ibanMod97("GB29 NWBK 6016 1331 9268 19"))
     }
 
+    func testIBANYemenRegistered() {
+        // codex round-40: Yemen (YE, length 30) joined the ISO 13616 registry in
+        // Jul-2024; the country/length gate must not reject real Yemeni IBANs.
+        XCTAssertEqual(Validators.ibanLengthByCountry["YE"], 30)
+        XCTAssertTrue(Validators.ibanMod97("YE15CBYE0001018861234567891234"))
+    }
+
     // MARK: Korean RRN
 
     func testKRRRNChecksum() {
