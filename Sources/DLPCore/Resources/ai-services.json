@@ -96,19 +96,13 @@
       "webDomains": [
         "copilot.microsoft.com",
         "copilot.cloud.microsoft",
-        "m365.cloud.microsoft",
-        "office.com",
-        "outlook.office.com",
-        "bing.com",
         "edgeservices.bing.com"
       ],
       "apiHosts": [
-        "substrate.office.com",
-        "m365.cloud.microsoft",
         "copilot.cloud.microsoft",
         "gateway.prod.island.powerapps.com"
       ],
-      "notes": "Enterprise M365 Copilot rides inside the existing Microsoft 365 substrate (*.cloud.microsoft, *.office.com, substrate.office.com) and requires WebSocket/WSS - data egress is indistinguishable at the host level from normal Office traffic, so a content filter cannot separate Copilot from Outlook/Teams without payload inspection. Consumer Copilot (copilot.microsoft.com, formerly Bing Chat / edgeservices.bing.com) is the higher-risk unsanctioned surface. Note Microsoft is mid-migration to the cloud.microsoft domain. Monitored overall; consumer copilot.microsoft.com leans unsanctioned."
+      "notes": "We deliberately list ONLY the Copilot-distinct surfaces: consumer copilot.microsoft.com (formerly Bing Chat / edgeservices.bing.com) and the M365 Copilot subdomain copilot.cloud.microsoft. The shared M365 substrate hosts (office.com, outlook.office.com, m365.cloud.microsoft, substrate.office.com, bing.com) are intentionally NOT listed: DestinationClassifier uses suffix matching, so including them would classify ordinary Office/Outlook mailbox sync and Bing web search as Copilot and flood network-audit.jsonl / the SIEM with false AI-use events for any tenant that simply uses Microsoft 365. Enterprise M365 Copilot genuinely rides inside that shared substrate over WSS, so it is indistinguishable from normal Office traffic at the host level - separating it requires payload inspection or an explicit per-tenant M365-Copilot setting, not host classification. Monitored overall; consumer copilot.microsoft.com leans unsanctioned."
     },
     {
       "id": "github-copilot",

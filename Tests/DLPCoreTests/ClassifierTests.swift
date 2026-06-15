@@ -84,6 +84,24 @@ final class ClassifierTests: XCTestCase {
         // Shared GitHub content CDN must not be classified as Copilot.
         XCTAssertNil(classifier.classify(host: "raw.githubusercontent.com").service)
         XCTAssertNil(classifier.classify(host: "avatars.githubusercontent.com").service)
+        // codex round-38: shared M365 substrate hosts must NOT be tagged as
+        // microsoft-copilot — suffix-matching office.com/bing.com would flag
+        // ordinary Outlook mailbox sync and Bing web search as AI egress.
+        XCTAssertNil(classifier.classify(host: "outlook.office.com").service)
+        XCTAssertNil(classifier.classify(host: "www.office.com").service)
+        XCTAssertNil(classifier.classify(host: "office.com").service)
+        XCTAssertNil(classifier.classify(host: "www.bing.com").service)
+        XCTAssertNil(classifier.classify(host: "bing.com").service)
+        XCTAssertNil(classifier.classify(host: "m365.cloud.microsoft").service)
+        XCTAssertNil(classifier.classify(host: "substrate.office.com").service)
+    }
+
+    func testCopilotDistinctSurfacesStillClassified() {
+        // The Copilot-distinct surfaces we DO keep must still resolve, so trimming
+        // the shared substrate hosts didn't blind us to actual Copilot egress.
+        XCTAssertEqual(classifier.classify(host: "copilot.microsoft.com").service?.id, "microsoft-copilot")
+        XCTAssertEqual(classifier.classify(host: "copilot.cloud.microsoft").service?.id, "microsoft-copilot")
+        XCTAssertEqual(classifier.classify(host: "edgeservices.bing.com").service?.id, "microsoft-copilot")
     }
 
     func testAnthropicConsoleResolvesToAPIService() {
