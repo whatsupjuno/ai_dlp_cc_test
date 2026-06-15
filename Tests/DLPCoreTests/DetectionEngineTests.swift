@@ -37,6 +37,27 @@ final class DetectionEngineTests: XCTestCase {
         XCTAssertTrue(f.contains { $0.type.id == "iban" }, "grouped IBAN should be detected")
     }
 
+    func testLowercaseIBANDetected() {
+        // codex round-41: a typed/pasted lower/mixed-case IBAN must still match the
+        // pattern (the validator uppercases before the checksum). Otherwise real
+        // bank-account data slips past the clipboard/file scanners.
+        let f = makeEngine().scan("account gb29nwbk60161331926819 thanks", context: ctx())
+        XCTAssertTrue(f.contains { $0.type.id == "iban" }, "lowercase IBAN should be detected")
+    }
+
+    func testGroupedIBANDoesNotBleedIntoTrailingWords() {
+        // The printed (grouped) form must stop at its final group instead of letting
+        // the space separator swallow following words — otherwise the validator sees
+        // garbage (wrong length / checksum) and the IBAN is missed. Trailing words in
+        // both cases (the original lowercase 'by EOD' and an all-caps 'BY EOD') must
+        // not be absorbed.
+        for s in ["please wire to GB82 WEST 1234 5698 7654 32 by EOD",
+                  "send GB82 WEST 1234 5698 7654 32 BY EOD now"] {
+            let f = makeEngine().scan(s, context: ctx())
+            XCTAssertTrue(f.contains { $0.type.id == "iban" }, "IBAN with trailing words should still be detected: \(s)")
+        }
+    }
+
     func testLuhnSuppressesRandom16Digits() {
         // A 16-digit number that fails Luhn should not be reported as a card.
         // (1234567812345678 is Luhn-invalid; verified in ValidatorsTests.)
