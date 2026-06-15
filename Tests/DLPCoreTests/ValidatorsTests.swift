@@ -76,6 +76,13 @@ final class ValidatorsTests: XCTestCase {
         XCTAssertEqual(Validators.ibanValidPrefixLength("DE89370400440532013000"), 22)
         // Not an IBAN at all -> nil.
         XCTAssertNil(Validators.ibanValidPrefixLength("ZZ73123456789012345678 hello"))
+        // codex round-43: a valid IBAN immediately followed by another word char
+        // (no separator) is a longer token, NOT an IBAN — must NOT be trimmed to the
+        // 22-char prefix. Right boundary must be a separator/non-word or end.
+        XCTAssertNil(Validators.ibanValidPrefixLength("DE89370400440532013000A"))
+        XCTAssertNil(Validators.ibanValidPrefixLength("DE893704004405320130005"))
+        // A separator after the IBAN is a real boundary -> still trims.
+        XCTAssertEqual(Validators.ibanValidPrefixLength("DE89370400440532013000 ref"), 22)
     }
 
     func testIBANYemenRegistered() {

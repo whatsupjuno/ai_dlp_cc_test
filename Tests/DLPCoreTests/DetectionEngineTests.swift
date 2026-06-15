@@ -37,6 +37,14 @@ final class DetectionEngineTests: XCTestCase {
         XCTAssertTrue(f.contains { $0.type.id == "iban" }, "grouped IBAN should be detected")
     }
 
+    func testIBANNotReportedInsideLongerToken() {
+        // codex round-43: a valid IBAN that runs straight into more word chars
+        // (no separator) is part of a longer ID/token, not an IBAN, and must not be
+        // reported as a high-confidence finding.
+        let f = makeEngine().scan("ref DE89370400440532013000A9 end", context: ctx())
+        XCTAssertFalse(f.contains { $0.type.id == "iban" }, "IBAN must not be reported inside a longer token")
+    }
+
     func testLowercaseIBANDetected() {
         // codex round-41: a typed/pasted lower/mixed-case IBAN must still match the
         // pattern (the validator uppercases before the checksum). Otherwise real

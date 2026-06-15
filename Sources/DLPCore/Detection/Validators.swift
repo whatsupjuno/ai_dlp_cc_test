@@ -156,7 +156,16 @@ public enum Validators {
         // Validate exactly the country-length prefix; trailing alnum is not ours.
         guard ibanMod97(String(up.prefix(expectedLength))) else { return nil }
         // Original-string length up to and including the expectedLength-th alnum.
-        return alnumOriginalIndex[expectedLength - 1] + 1
+        let boundary = alnumOriginalIndex[expectedLength - 1] + 1
+        // Only trim if there is a REAL right boundary after the IBAN: end of the
+        // candidate, or a separator/non-word char. If the very next character is
+        // alphanumeric the IBAN runs straight into more word chars (e.g.
+        // `DE89370400440532013000A`), so this is a longer token, NOT an IBAN — bail
+        // and let the exact-length validator reject the whole over-long candidate.
+        if boundary < chars.count, chars[boundary].isLetter || chars[boundary].isNumber {
+            return nil
+        }
+        return boundary
     }
 
     // MARK: - Korean Resident Registration Number (주민등록번호)
