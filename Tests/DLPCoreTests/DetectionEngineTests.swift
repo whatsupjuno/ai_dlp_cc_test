@@ -45,16 +45,28 @@ final class DetectionEngineTests: XCTestCase {
         XCTAssertTrue(f.contains { $0.type.id == "iban" }, "lowercase IBAN should be detected")
     }
 
-    func testGroupedIBANDoesNotBleedIntoTrailingWords() {
-        // The printed (grouped) form must stop at its final group instead of letting
-        // the space separator swallow following words — otherwise the validator sees
-        // garbage (wrong length / checksum) and the IBAN is missed. Trailing words in
-        // both cases (the original lowercase 'by EOD' and an all-caps 'BY EOD') must
-        // not be absorbed.
-        for s in ["please wire to GB82 WEST 1234 5698 7654 32 by EOD",
-                  "send GB82 WEST 1234 5698 7654 32 BY EOD now"] {
-            let f = makeEngine().scan(s, context: ctx())
-            XCTAssertTrue(f.contains { $0.type.id == "iban" }, "IBAN with trailing words should still be detected: \(s)")
+    func testGroupedIBANBoundaryRefinedAwayFromTrailingWords() {
+        // codex round-41/42: a grouped IBAN is structurally indistinguishable from
+        // one followed by short words, so the regex over-captures and the validator
+        // refines the boundary back to the exact country-length IBAN. This must hold
+        // whether the real final group is short (GB '...32') or a full four chars
+        // (BE '...7034'), and whether the trailing word is lower- or upper-case.
+        // The mask must reveal the IBAN's own last two chars — proving the span was
+        // trimmed to the IBAN and not the trailing word.
+        let cases: [(String, String)] = [
+            ("please wire to GB82 WEST 1234 5698 7654 32 by EOD", "32"),
+            ("send GB82 WEST 1234 5698 7654 32 BY EOD now", "32"),
+            ("account BE68 5390 0754 7034 by reference today", "34"),
+            ("acct BE68 5390 0754 7034 NOW please", "34"),
+        ]
+        for (text, ibanTail) in cases {
+            let f = makeEngine().scan(text, context: ctx())
+            let iban = f.first { $0.type.id == "iban" }
+            XCTAssertNotNil(iban, "IBAN with trailing words should still be detected: \(text)")
+            XCTAssertTrue(iban?.maskedValue.hasSuffix(ibanTail) ?? false,
+                          "mask '\(iban?.maskedValue ?? "nil")' should end with IBAN tail '\(ibanTail)', not a trailing word")
+            XCTAssertFalse(iban?.maskedValue.lowercased().contains("by") ?? true,
+                           "trailing word must not be inside the IBAN span")
         }
     }
 

@@ -66,6 +66,18 @@ final class ValidatorsTests: XCTestCase {
         XCTAssertTrue(Validators.ibanMod97("GB29 NWBK 6016 1331 9268 19"))
     }
 
+    func testIBANValidPrefixLengthTrimsTrailingText() {
+        // codex round-42: the validator finds the exact IBAN boundary inside an
+        // over-captured candidate using the country length, so trailing words are
+        // excluded. "BE68 5390 0754 7034 by" -> the valid IBAN ends at "...7034".
+        let prefixLen = Validators.ibanValidPrefixLength("BE68 5390 0754 7034 by")
+        XCTAssertEqual(prefixLen, 19) // up to and including the last digit of 7034
+        // A clean compact IBAN refines to its full length.
+        XCTAssertEqual(Validators.ibanValidPrefixLength("DE89370400440532013000"), 22)
+        // Not an IBAN at all -> nil.
+        XCTAssertNil(Validators.ibanValidPrefixLength("ZZ73123456789012345678 hello"))
+    }
+
     func testIBANYemenRegistered() {
         // codex round-40: Yemen (YE, length 30) joined the ISO 13616 registry in
         // Jul-2024; the country/length gate must not reject real Yemeni IBANs.

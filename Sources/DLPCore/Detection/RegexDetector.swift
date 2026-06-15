@@ -71,7 +71,20 @@ public final class RegexDetector: Detector, @unchecked Sendable {
                 count += 1
                 if count >= self.maxMatchesPerRule { stop.pointee = true }
 
-                let value = ns.substring(with: range)
+                var value = ns.substring(with: range)
+
+                // Boundary refinement: a greedy regex can over-capture trailing
+                // text (e.g. a grouped IBAN swallowing a following short word).
+                // Validators that know the exact length from the value itself
+                // (IBAN, via the country registry) trim the span back to the real
+                // match, so the finding's span/mask/fingerprint reflect only the
+                // sensitive value. IBAN charset is ASCII, so the character count
+                // returned equals the UTF-16 length used here.
+                if let refined = Validators.refinedPrefixLength(rule.validator, on: value),
+                   refined > 0, refined < range.length {
+                    range = NSRange(location: range.location, length: refined)
+                    value = ns.substring(with: range)
+                }
 
                 // Apply the validator. A hard failure (e.g. Luhn on a card) drops
                 // the match; a *soft* failure (KR RRN checksum on a post-2020

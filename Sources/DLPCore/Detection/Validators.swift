@@ -130,6 +130,35 @@ public enum Validators {
         return remainder == 1
     }
 
+    /// A grouped/printed IBAN is structurally indistinguishable from one followed
+    /// by short words: `BE68 5390 0754 7034 by` looks like a longer grouped IBAN to
+    /// any regex, so the matcher over-captures the trailing word. Only the
+    /// country-specific length disambiguates. Given a (possibly over-captured) IBAN
+    /// candidate, return the number of LEADING characters of `raw` (separators
+    /// included) that form a valid IBAN, or nil if there is no valid IBAN prefix.
+    /// The detector uses this to trim the match back to the real IBAN boundary.
+    /// IBAN charset is ASCII, so the returned character count equals the UTF-16
+    /// offset the detector needs.
+    public static func ibanValidPrefixLength(_ raw: String) -> Int? {
+        let chars = Array(raw)
+        // Compact to alphanumerics, remembering each alnum's index in `chars`.
+        var alnumOriginalIndex: [Int] = []
+        var compactChars: [Character] = []
+        for (i, c) in chars.enumerated() where c.isLetter || c.isNumber {
+            compactChars.append(c); alnumOriginalIndex.append(i)
+        }
+        let up = String(compactChars).uppercased()
+        guard up.count >= 15 else { return nil }
+        let country = String(up.prefix(2))
+        guard country.allSatisfy({ $0.isLetter }),
+              let expectedLength = ibanLengthByCountry[country],
+              up.count >= expectedLength else { return nil }
+        // Validate exactly the country-length prefix; trailing alnum is not ours.
+        guard ibanMod97(String(up.prefix(expectedLength))) else { return nil }
+        // Original-string length up to and including the expectedLength-th alnum.
+        return alnumOriginalIndex[expectedLength - 1] + 1
+    }
+
     // MARK: - Korean Resident Registration Number (주민등록번호)
 
     /// Validate that the embedded birth date of a Korean RRN is a real calendar
@@ -208,6 +237,18 @@ public enum Validators {
         case .krRRNChecksum: return krRRNChecksum(value)
         case .abaRouting: return abaRouting(value)
         case .npiLuhn: return npiLuhn(value)
+        }
+    }
+
+    /// Some validators can determine the exact boundary of a match from the value
+    /// itself, letting the detector trim trailing text a greedy regex captured.
+    /// Returns the leading character count that forms a valid match, or nil when
+    /// the validator has no boundary refinement (the detector then keeps the full
+    /// regex span).
+    public static func refinedPrefixLength(_ kind: ValidatorKind, on value: String) -> Int? {
+        switch kind {
+        case .ibanMod97: return ibanValidPrefixLength(value)
+        default: return nil
         }
     }
 
