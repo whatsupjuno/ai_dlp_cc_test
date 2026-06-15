@@ -28,16 +28,14 @@ public final class FilterDataProvider: NEFilterDataProvider {
     private let auditSink: AuditSink? = FilterDataProvider.makeAuditSink()
 
     private let maxAccumulate = 64 * 1024
-    /// Forward look-ahead requested per callback while a plaintext body is still
-    /// streaming under the cap. It only ever applies to bytes the client has NOT
-    /// sent yet, so (unlike a held tail) it can never withhold an already-sent
-    /// request tail and deadlock a keep-alive upload.
-    private let peekChunk = 4 * 1024
-    /// Bytes to peek before the FIRST handleOutboundData callback. Must be below a
-    /// TLS ClientHello so the OS doesn't withhold the handshake waiting to fill the
-    /// peek (which would stall connection setup); 1 means "deliver as soon as any
-    /// outbound byte is available" — the OS then hands over whatever is buffered.
-    private let initialPeek = 1
+    /// Bytes to peek both for the FIRST callback and for each forward look-ahead.
+    /// MUST be 1: any larger value makes the OS withhold outbound bytes until the
+    /// peek fills, which stalls a connection whose remaining data is smaller than
+    /// the peek (a short TLS ClientHello at setup, or a sub-peek keep-alive request
+    /// body). `1` means "deliver as soon as any further byte is available" — the OS
+    /// then hands over whatever is buffered — so we keep inspecting the stream
+    /// without ever holding an already-sent byte back.
+    private let outboundPeek = 1
 
     /// Per-flow accumulated outbound buffer (for cumulative inspection). `seen`
     /// is the highest absolute offset accumulated, so a cumulative/re-delivered
@@ -128,7 +126,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
             // audited in handleOutboundData if any appear.
             return .filterDataVerdict(
                 withFilterInbound: false, peekInboundBytes: 0,
-                filterOutbound: true, peekOutboundBytes: initialPeek)
+                filterOutbound: true, peekOutboundBytes: outboundPeek)
 
         case .monitored, .unsanctioned:
             // Record the destination-tier egress ONCE now, at flow creation. The
@@ -141,7 +139,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
                 withFilterInbound: false,
                 peekInboundBytes: 0,
                 filterOutbound: true,
-                peekOutboundBytes: initialPeek
+                peekOutboundBytes: outboundPeek
             )
         }
     }
@@ -160,7 +158,7 @@ public final class FilterDataProvider: NEFilterDataProvider {
         // covers audit-level findings (allowed) as well as drops, without one
         // event per clean chunk.
         let decision = Self.decideOutbound(
-            buffer: buffer, windowCount: readBytes.count, peekChunk: peekChunk, maxAccumulate: maxAccumulate
+            buffer: buffer, windowCount: readBytes.count, peekChunk: outboundPeek, maxAccumulate: maxAccumulate
         ) { text in
             let verdict = self.engine.inspect(text, channel: .network, host: host, sourceApp: nil)
             // "Sensitive" = anything a content filter can't apply in-place
