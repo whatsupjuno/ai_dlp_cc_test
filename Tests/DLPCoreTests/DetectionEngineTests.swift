@@ -56,6 +56,27 @@ final class DetectionEngineTests: XCTestCase {
         XCTAssertEqual(bic?.confidence, .medium, "a neighboring keyword should still boost")
     }
 
+    func testKeywordCorroborationRequiresWordBoundary() {
+        // codex round-45: "discard"/"postcard" contain "card" but are not the word
+        // "card"; substring corroboration would falsely boost the BIC to medium and
+        // trip warn-financial on ordinary text. Boundary matching must reject these.
+        for text in ["discard XYZWUS33 now", "postcard XYZWUS33 sent"] {
+            let f = makeEngine().scan(text, context: ctx())
+            let bic = f.first { $0.detectorID == "swift-bic" }
+            XCTAssertEqual(bic?.confidence, .low, "substring inside another word must not corroborate: \(text)")
+        }
+        // A real word-boundary keyword (even punctuation-adjacent) still boosts.
+        let f2 = makeEngine().scan("re: card XYZWUS33", context: ctx())
+        XCTAssertEqual(f2.first { $0.detectorID == "swift-bic" }?.confidence, .medium)
+    }
+
+    func testKoreanKeywordStillCorroboratesAsSubstring() {
+        // Korean has no space-delimited word boundaries, so CJK keywords keep
+        // substring matching: 카드 inside 신용카드번호 must still corroborate.
+        let f = makeEngine().scan("신용카드번호 XYZWUS33", context: ctx())
+        XCTAssertEqual(f.first { $0.detectorID == "swift-bic" }?.confidence, .medium)
+    }
+
     func testIBANNotReportedInsideLongerToken() {
         // codex round-43: a valid IBAN that runs straight into more word chars
         // (no separator) is part of a longer ID/token, not an IBAN, and must not be

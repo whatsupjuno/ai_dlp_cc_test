@@ -58,7 +58,7 @@ public struct ContextBooster: Sendable {
             let right = rightLen > 0 ? ns.substring(with: NSRange(location: f.span.upperBound, length: rightLen)) : ""
             let around = (left + "\n" + right).lowercased()
 
-            guard keywords.contains(where: { around.contains($0) }) else { return f }
+            guard keywords.contains(where: { ContextBooster.corroborates(around, $0) }) else { return f }
             guard f.confidence < .high else { return f } // already maxed
 
             let bumped: Confidence = f.confidence == .low ? .medium : .high
@@ -69,5 +69,35 @@ public struct ContextBooster: Sendable {
                 note: [f.note, "context-corroborated"].compactMap { $0 }.joined(separator: ";")
             )
         }
+    }
+
+    /// Whether `keyword` corroborates within `haystack` (already lowercased).
+    ///
+    /// Latin keywords must match at WORD BOUNDARIES so that "discard"/"postcard"
+    /// do not corroborate via the substring "card". CJK keywords (e.g. Korean
+    /// 카드/주민) are matched as substrings because those scripts are not written
+    /// with space-delimited word boundaries, so `\b`-style boundaries don't apply.
+    static func corroborates(_ haystack: String, _ keyword: String) -> Bool {
+        guard !keyword.isEmpty else { return false }
+        // Non-ASCII (CJK etc.): no Latin word boundaries — substring match.
+        guard keyword.unicodeScalars.allSatisfy({ $0.isASCII }) else {
+            return haystack.contains(keyword)
+        }
+        // Latin: accept only occurrences bounded by non-word characters on both
+        // sides (start/end of string counts as a boundary).
+        var lower = haystack.startIndex
+        while let r = haystack.range(of: keyword, range: lower..<haystack.endIndex) {
+            let beforeOK = r.lowerBound == haystack.startIndex
+                || !isWordChar(haystack[haystack.index(before: r.lowerBound)])
+            let afterOK = r.upperBound == haystack.endIndex
+                || !isWordChar(haystack[r.upperBound])
+            if beforeOK && afterOK { return true }
+            lower = haystack.index(after: r.lowerBound)
+        }
+        return false
+    }
+
+    private static func isWordChar(_ c: Character) -> Bool {
+        c.isLetter || c.isNumber || c == "_"
     }
 }
